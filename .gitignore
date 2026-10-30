@@ -7,3 +7,11 @@ local.properties
 *.jks
 *.keystore
 .DS_Store
+
+# Never commit APK signing identities or secret setup files
+*.p12
+*.pfx
+*.pem
+KEYSTORE_BASE64.txt
+SIGNING_PASSWORD.txt
+*signing-kit*.zip

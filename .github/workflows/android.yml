@@ -1,13 +1,15 @@
-name: Android APK and unit tests
+name: Android tests and signed APK
 on:
   push:
-    branches: [main, 'feature/**']
+    branches: [main, 'feature/**', 'fix/**']
   pull_request:
   workflow_dispatch:
+
 jobs:
   build:
+    name: Unit tests, debug build and release signing smoke test
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
@@ -21,28 +23,35 @@ jobs:
           gradle-version: '8.13'
       - name: Install Android 36 platform
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
           test -n "$SDKMANAGER"
-          "$SDKMANAGER" --version
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
-      - name: Unit tests and debug APK
+      - name: Unit tests and debug APK build
         run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace
-      - name: Confirm debug APK exists
+      - name: Confirm debug build exists (NOT distributed)
         run: test -s app/build/outputs/apk/debug/app-debug.apk
-      - uses: actions/upload-artifact@v4
-        if: success()
-        with:
-          name: pomoshchnik-elektrika-0.5.0-alpha-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+      - name: Smoke-test release signing with a throwaway key (NOT distributed)
+        if: github.event_name == 'pull_request'
+        run: |
+          keytool -genkeypair -noprompt -alias pomoshchnik -keyalg RSA -keysize 2048 \
+            -validity 1 -storetype PKCS12 -keystore "$RUNNER_TEMP/throwaway-key.p12" \
+            -storepass ci-test-only-12345678 -keypass ci-test-only-12345678 \
+            -dname "CN=CI Signing Smoke Test" >/dev/null
+          ELECTRICIAN_SIGNING_KEYSTORE_PATH="$RUNNER_TEMP/throwaway-key.p12" \
+          ELECTRICIAN_SIGNING_PASSWORD="ci-test-only-12345678" \
+            gradle :app:assembleRelease --no-daemon --stacktrace
+          test -s app/build/outputs/apk/release/app-release.apk
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify app/build/outputs/apk/release/app-release.apk
 
   instrumentation:
-    name: Room and backup tests (Android emulator)
+    name: Android emulator — Room and UI tests
     needs: build
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
@@ -66,3 +75,78 @@ jobs:
           target: google_apis
           arch: x86_64
           script: gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace
+
+  signed-release:
+    name: Signed, updateable release APK (main only)
+    needs: build
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    env:
+      ENCODED_KEYSTORE: ${{ secrets.ELECTRICIAN_SIGNING_KEYSTORE_BASE64 }}
+      SIGNING_PASSWORD: ${{ secrets.ELECTRICIAN_SIGNING_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check protected signing credentials
+        id: signing
+        shell: bash
+        run: |
+          if [[ -z "$ENCODED_KEYSTORE" || -z "$SIGNING_PASSWORD" ]]; then
+            echo "::notice::No stable signing key set. Configure the two repository Actions secrets described in docs/release-signing.md. No distributable APK will be uploaded."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-java@v4
+        if: steps.signing.outputs.ready == 'true'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.signing.outputs.ready == 'true'
+        with:
+          gradle-version: '8.13'
+      - name: Install Android 36 platform
+        if: steps.signing.outputs.ready == 'true'
+        run: |
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
+      - name: Decode protected signing key
+        if: steps.signing.outputs.ready == 'true'
+        shell: bash
+        run: |
+          printf '%s' "$ENCODED_KEYSTORE" | base64 --decode > "$RUNNER_TEMP/pomoshchnik-release-key.p12"
+          chmod 600 "$RUNNER_TEMP/pomoshchnik-release-key.p12"
+          echo "ELECTRICIAN_SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/pomoshchnik-release-key.p12" >> "$GITHUB_ENV"
+          echo "ELECTRICIAN_SIGNING_PASSWORD=$SIGNING_PASSWORD" >> "$GITHUB_ENV"
+      - name: Build signed release
+        if: steps.signing.outputs.ready == 'true'
+        run: gradle :app:assembleRelease --no-daemon --stacktrace
+      - name: Verify signature matches the permanent release certificate
+        if: steps.signing.outputs.ready == 'true'
+        shell: bash
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" > "$RUNNER_TEMP/apk-signing-details.txt"
+          EXPECTED="a873d87df133fb4750aaf9a48c1ce6391ced58f3ff5e43d3a52c1343d3951afc"
+          ACTUAL="$(sed -nE 's/.*Signer #1 certificate SHA-256 digest: ([[:xdigit:]]+).*/\1/p' "$RUNNER_TEMP/apk-signing-details.txt" | head -n 1 | tr '[:upper:]' '[:lower:]')"
+          test -n "$ACTUAL"
+          if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+            echo "::error::The release signature does not match the permanent trusted certificate. Refusing to publish."
+            exit 1
+          fi
+          echo "Signed release verified with the permanent certificate."
+      - name: Upload signed, updateable APK
+        if: steps.signing.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pomoshchnik-elektrika-0.5.1-alpha-SIGNED-release
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 90
