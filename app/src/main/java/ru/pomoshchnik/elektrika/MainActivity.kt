@@ -88,7 +88,7 @@ class MainActivity : ComponentActivity() {
                             lines += "Итого по известным ценам: " + rub(parts.sumOf { (it.priceSnapshotKopeks ?: 0L) * it.quantity })
                             if (parts.any { it.priceSnapshotKopeks == null }) lines += "ВНИМАНИЕ: стоимость неполная"
                             writePdf(output, lines)
-                        } ?: error("Нет доступа к файлу")
+                        } ?: kotlin.error("Нет доступа к файлу")
                     }.onSuccess { Toast.makeText(this, "PDF сохранён", Toast.LENGTH_SHORT).show() }
                         .onFailure { error = it.localizedMessage }
                 }
@@ -107,7 +107,7 @@ class MainActivity : ComponentActivity() {
                                     require(output.size() <= CatalogService.MAX_BYTES) { "Файл больше 4 МБ" }
                                 }
                                 output.toString("UTF-8")
-                            } ?: error("Не удалось открыть каталог")
+                            } ?: kotlin.error("Не удалось открыть каталог")
                         }
                         catalogService.importJson(content)
                     }.onSuccess { number ->
