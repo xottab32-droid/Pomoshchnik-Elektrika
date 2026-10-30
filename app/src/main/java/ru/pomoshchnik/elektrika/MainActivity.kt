@@ -36,12 +36,27 @@ private val accent = Color(0xFFCE403F)
 private fun rub(kopeks: Long): String = NumberFormat.getCurrencyInstance(Locale("ru", "RU")).format(kopeks / 100.0)
 
 class MainActivity : ComponentActivity() {
+    private fun readLimitedJson(uri: android.net.Uri, maxBytes: Int): String {
+        return contentResolver.openInputStream(uri)?.use { stream ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            while (true) {
+                val n = stream.read(buffer)
+                if (n < 0) break
+                output.write(buffer, 0, n)
+                require(output.size() <= maxBytes) { "Файл больше допустимых 4 МБ" }
+            }
+            output.toString("UTF-8")
+        } ?: kotlin.error("Не удалось прочитать файл")
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("settings", MODE_PRIVATE)
         val db = Room.databaseBuilder(applicationContext, LocalDatabase::class.java, "electrician.db")
             .addMigrations(LocalDatabase.MIGRATION_1_2).build()
         val catalogService = CatalogService(db)
+        val projectTransfer = ProjectTransfer(db)
         val dao = db.dao()
         setContent {
             val scope = rememberCoroutineScope()
@@ -49,6 +64,7 @@ class MainActivity : ComponentActivity() {
             var tab by remember { mutableIntStateOf(0) }
             var selectedId by remember { mutableStateOf<String?>(null) }
             var error by remember { mutableStateOf<String?>(null) }
+            var exportProjectId by remember { mutableStateOf<String?>(null) }
             val projectFlow = remember { dao.projects() }
             val productFlow = remember { dao.products() }
             val stateFlow = remember { dao.catalogState() }
@@ -115,6 +131,31 @@ class MainActivity : ComponentActivity() {
                     }.onFailure { error = "Обновление каталога: ${it.localizedMessage}" }
                 }
             }
+            val projectExporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+                val id = exportProjectId
+                exportProjectId = null
+                if (uri != null && id != null) scope.launch {
+                    runCatching {
+                        val data = projectTransfer.exportJson(id)
+                        withContext(Dispatchers.IO) {
+                            contentResolver.openOutputStream(uri)?.use { it.write(data.toByteArray(Charsets.UTF_8)) }
+                                ?: kotlin.error("Не удалось сохранить файл")
+                        }
+                    }.onSuccess {
+                        Toast.makeText(this@MainActivity, "Резервная копия сохранена", Toast.LENGTH_SHORT).show()
+                    }.onFailure { error = "Экспорт: ${it.localizedMessage}" }
+                }
+            }
+            val projectImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                if (uri != null) scope.launch {
+                    runCatching {
+                        val data = withContext(Dispatchers.IO) { readLimitedJson(uri, ProjectTransfer.MAX_BYTES) }
+                        projectTransfer.importJson(data)
+                    }.onSuccess { imported ->
+                        Toast.makeText(this@MainActivity, "Импортирован проект: ${imported.name}", Toast.LENGTH_LONG).show()
+                    }.onFailure { error = "Импорт проекта: ${it.localizedMessage}" }
+                }
+            }
             val scheme = if (dark) darkColorScheme(primary = accent) else lightColorScheme(primary = accent)
             MaterialTheme(colorScheme = scheme) {
                 Scaffold(
@@ -152,7 +193,12 @@ class MainActivity : ComponentActivity() {
                                 onDelete = { id ->
                                     scope.launch { runCatching { withContext(Dispatchers.IO) { dao.deleteProject(id) } }
                                         .onFailure { error = it.localizedMessage } }
-                                }
+                                },
+                                onExport = { project ->
+                                    exportProjectId = project.id
+                                    projectExporter.launch("project-" + project.name.take(45).replace(Regex("[^a-zA-Zа-яА-ЯёЁ0-9 _-]"), "_") + ".json")
+                                },
+                                onImport = { projectImporter.launch(arrayOf("application/json", "text/plain")) }
                             )
                             1 -> if (active == null) EmptyProject() else PanelPage(active.name, parts, products,
                                 onAdd = { product -> scope.launch {
@@ -228,7 +274,8 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
 
 @Composable private fun ProjectsPage(
     projects: List<Project>, selectedId: String?, onSelect: (String) -> Unit,
-    onCreate: (String) -> Unit, onDelete: (String) -> Unit
+    onCreate: (String) -> Unit, onDelete: (String) -> Unit,
+    onExport: (Project) -> Unit, onImport: () -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var deleteId by remember { mutableStateOf<String?>(null) }
@@ -237,6 +284,9 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
             modifier = Modifier.fillMaxWidth())
         Button(onClick = { onCreate(name); name = "" }, enabled = name.isNotBlank() && name.length <= 120,
             modifier = Modifier.fillMaxWidth()) { Text("Создать проект") }
+        OutlinedButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
+            Text("Импортировать проект из JSON")
+        }
         if (projects.isEmpty()) Text("Пока нет проектов. Все будущие данные будут храниться только в телефоне.")
         projects.forEach { project ->
             ElevatedCard(onClick = { onSelect(project.id) }, modifier = Modifier.fillMaxWidth()) {
@@ -246,11 +296,14 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
                         Text(if (selectedId == project.id) "Открыт" else "Нажми для открытия",
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    TextButton(onClick = { deleteId = project.id }) { Text("Удалить") }
+                    Column {
+                        TextButton(onClick = { onExport(project) }) { Text("Экспорт") }
+                        TextButton(onClick = { deleteId = project.id }) { Text("Удалить") }
+                    }
                 }
             }
         }
-        Text("Удаление объекта уберёт его комнаты и оборудование. Экспорт JSON будет добавлен после проверки CI.",
+        Text("Перед удалением объекта сохрани резервную копию в JSON: восстановление удалённого проекта без файла невозможно.",
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     if (deleteId != null) AlertDialog(onDismissRequest = { deleteId = null },
