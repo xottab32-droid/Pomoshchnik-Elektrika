@@ -28,17 +28,36 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ru.pomoshchnik.elektrika.data.*
+import java.io.ByteArrayOutputStream
+import java.math.BigDecimal
 import java.text.NumberFormat
 import java.util.Locale
 
 private val accent = Color(0xFFCE403F)
-private fun rub(kopeks: Long): String = NumberFormat.getCurrencyInstance(Locale("ru", "RU")).format(kopeks / 100.0)
+private fun rub(kopeks: Long): String = NumberFormat.getCurrencyInstance(Locale("ru", "RU")).format(BigDecimal.valueOf(kopeks, 2))
 
 class MainActivity : ComponentActivity() {
+    private fun readLimitedJson(uri: android.net.Uri, maxBytes: Int): String {
+        return contentResolver.openInputStream(uri)?.use { stream ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            while (true) {
+                val n = stream.read(buffer)
+                if (n < 0) break
+                output.write(buffer, 0, n)
+                require(output.size() <= maxBytes) { "Файл больше допустимых 4 МБ" }
+            }
+            output.toString("UTF-8")
+        } ?: kotlin.error("Не удалось прочитать файл")
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("settings", MODE_PRIVATE)
-        val db = RoomFactory.databaseBuilder(applicationContext, LocalDatabase::class.java, "electrician.db").build()
+        val db = RoomFactory.databaseBuilder(applicationContext, LocalDatabase::class.java, "electrician.db")
+            .addMigrations(LocalDatabase.MIGRATION_1_2).build()
+        val catalogService = CatalogService(db)
+        val projectTransfer = ProjectTransfer(db)
         val dao = db.dao()
         setContent {
             val scope = rememberCoroutineScope()
@@ -46,22 +65,27 @@ class MainActivity : ComponentActivity() {
             var tab by remember { mutableIntStateOf(0) }
             var selectedId by remember { mutableStateOf<String?>(null) }
             var error by remember { mutableStateOf<String?>(null) }
+            var exportProjectId by remember { mutableStateOf<String?>(null) }
             val projectFlow = remember { dao.projects() }
             val productFlow = remember { dao.products() }
+            val stateFlow = remember { dao.catalogState() }
             val projects by projectFlow.collectAsState(initial = emptyList())
             val products by productFlow.collectAsState(initial = emptyList())
-            val parts by produceState(initialValue = emptyList<Part>(), key1 = selectedId) {
-                val id = selectedId ?: return@produceState
-                dao.parts(id).collect { value = it }
+            val catalogState by stateFlow.collectAsState(initial = null)
+            // key() recreates the collection state when switching projects, preventing
+            // the previous project's devices/rooms appearing while the new Flow loads.
+            val parts = key(selectedId) {
+                selectedId?.let { dao.parts(it).collectAsState(initial = emptyList()).value }
+                    ?: emptyList()
             }
-            val rooms by produceState(initialValue = emptyList<Room>(), key1 = selectedId) {
-                val id = selectedId ?: return@produceState
-                dao.rooms(id).collect { value = it }
+            val rooms = key(selectedId) {
+                selectedId?.let { dao.rooms(it).collectAsState(initial = emptyList()).value }
+                    ?: emptyList()
             }
             LaunchedEffect(Unit) {
                 runCatching {
                     withContext(Dispatchers.IO) {
-                        if (dao.productCount() == 0) dao.insertProducts(BundledCatalog.entries)
+                        catalogService.initialize()
                     }
                 }.onFailure { error = it.localizedMessage }
             }
@@ -83,9 +107,57 @@ class MainActivity : ComponentActivity() {
                             lines += "Итого по известным ценам: " + rub(EstimateMath.calculate(parts.map { EstimateLine(it.priceSnapshotKopeks, it.quantity) }).knownKopeks)
                             if (parts.any { it.priceSnapshotKopeks == null }) lines += "ВНИМАНИЕ: стоимость неполная"
                             writePdf(output, lines)
-                        } ?: error("Нет доступа к файлу")
+                        } ?: kotlin.error("Нет доступа к файлу")
                     }.onSuccess { Toast.makeText(this, "PDF сохранён", Toast.LENGTH_SHORT).show() }
                         .onFailure { error = it.localizedMessage }
+                }
+            }
+            val catalogueImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                if (uri != null) scope.launch {
+                    runCatching {
+                        val content = withContext(Dispatchers.IO) {
+                            contentResolver.openInputStream(uri)?.use { stream ->
+                                val output = ByteArrayOutputStream()
+                                val buffer = ByteArray(8192)
+                                while (true) {
+                                    val n = stream.read(buffer)
+                                    if (n < 0) break
+                                    output.write(buffer, 0, n)
+                                    require(output.size() <= CatalogService.MAX_BYTES) { "Файл больше 4 МБ" }
+                                }
+                                output.toString("UTF-8")
+                            } ?: kotlin.error("Не удалось открыть каталог")
+                        }
+                        catalogService.importJson(content)
+                    }.onSuccess { number ->
+                        Toast.makeText(this@MainActivity, "Каталог обновлён: $number позиций", Toast.LENGTH_LONG).show()
+                    }.onFailure { error = "Обновление каталога: ${it.localizedMessage}" }
+                }
+            }
+            val projectExporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+                val id = exportProjectId
+                exportProjectId = null
+                if (uri != null && id != null) scope.launch {
+                    runCatching {
+                        val data = projectTransfer.exportJson(id)
+                        withContext(Dispatchers.IO) {
+                            contentResolver.openOutputStream(uri)?.use { it.write(data.toByteArray(Charsets.UTF_8)) }
+                                ?: kotlin.error("Не удалось сохранить файл")
+                        }
+                    }.onSuccess {
+                        Toast.makeText(this@MainActivity, "Резервная копия сохранена", Toast.LENGTH_SHORT).show()
+                    }.onFailure { error = "Экспорт: ${it.localizedMessage}" }
+                }
+            }
+            val projectImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                if (uri != null) scope.launch {
+                    runCatching {
+                        val data = withContext(Dispatchers.IO) { readLimitedJson(uri, ProjectTransfer.MAX_BYTES) }
+                        projectTransfer.importJson(data)
+                    }.onSuccess { imported ->
+                        selectedId = imported.id
+                        Toast.makeText(this@MainActivity, "Импортирован проект: ${imported.name}", Toast.LENGTH_LONG).show()
+                    }.onFailure { error = "Импорт проекта: ${it.localizedMessage}" }
                 }
             }
             val scheme = if (dark) darkColorScheme(primary = accent) else lightColorScheme(primary = accent)
@@ -125,6 +197,28 @@ class MainActivity : ComponentActivity() {
                                 onDelete = { id ->
                                     scope.launch { runCatching { withContext(Dispatchers.IO) { dao.deleteProject(id) } }
                                         .onFailure { error = it.localizedMessage } }
+                                },
+                                onExport = { project ->
+                                    exportProjectId = project.id
+                                    projectExporter.launch("project-" + project.name.take(45).replace(Regex("[^a-zA-Zа-яА-ЯёЁ0-9 _-]"), "_") + ".json")
+                                },
+                                onImport = { projectImporter.launch(arrayOf("application/json", "text/plain")) },
+                                onRename = { project, newName ->
+                                    scope.launch {
+                                        runCatching {
+                                            withContext(Dispatchers.IO) {
+                                                dao.renameProject(project.id, newName.trim(), System.currentTimeMillis())
+                                            }
+                                        }.onFailure { error = "Переименование: ${it.localizedMessage}" }
+                                    }
+                                },
+                                onDuplicate = { project ->
+                                    scope.launch {
+                                        runCatching {
+                                            withContext(Dispatchers.IO) { projectTransfer.duplicateProject(project.id) }
+                                        }.onSuccess { copy -> selectedId = copy.id }
+                                            .onFailure { error = "Копирование: ${it.localizedMessage}" }
+                                    }
                                 }
                             )
                             1 -> if (active == null) EmptyProject() else PanelPage(active.name, parts, products,
@@ -153,7 +247,8 @@ class MainActivity : ComponentActivity() {
                             else -> SettingsPage(dark, setDark = {
                                 dark = it
                                 prefs.edit().putBoolean("dark", it).apply()
-                            })
+                            }, version = catalogState?.version ?: "Загрузка...",
+                                onImport = { catalogueImporter.launch(arrayOf("application/json", "text/plain")) })
                         }
                         if (error != null) AlertDialog(onDismissRequest = { error = null },
                             title = { Text("Ошибка") }, text = { Text(error ?: "") },
@@ -200,15 +295,22 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
 
 @Composable private fun ProjectsPage(
     projects: List<Project>, selectedId: String?, onSelect: (String) -> Unit,
-    onCreate: (String) -> Unit, onDelete: (String) -> Unit
+    onCreate: (String) -> Unit, onDelete: (String) -> Unit,
+    onExport: (Project) -> Unit, onImport: () -> Unit,
+    onRename: (Project, String) -> Unit, onDuplicate: (Project) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var deleteId by remember { mutableStateOf<String?>(null) }
+    var renameTarget by remember { mutableStateOf<Project?>(null) }
+    var renameName by remember { mutableStateOf("") }
     Page("Мои объекты") {
         OutlinedTextField(name, { name = it }, label = { Text("Название объекта") }, singleLine = true,
             modifier = Modifier.fillMaxWidth())
         Button(onClick = { onCreate(name); name = "" }, enabled = name.isNotBlank() && name.length <= 120,
             modifier = Modifier.fillMaxWidth()) { Text("Создать проект") }
+        OutlinedButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
+            Text("Импортировать проект из JSON")
+        }
         if (projects.isEmpty()) Text("Пока нет проектов. Все будущие данные будут храниться только в телефоне.")
         projects.forEach { project ->
             ElevatedCard(onClick = { onSelect(project.id) }, modifier = Modifier.fillMaxWidth()) {
@@ -218,15 +320,38 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
                         Text(if (selectedId == project.id) "Открыт" else "Нажми для открытия",
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    TextButton(onClick = { deleteId = project.id }) { Text("Удалить") }
+                    Column {
+                        TextButton(onClick = {
+                            renameTarget = project
+                            renameName = project.name
+                        }) { Text("Название") }
+                        TextButton(onClick = { onDuplicate(project) }) { Text("Копия") }
+                        TextButton(onClick = { onExport(project) }) { Text("Экспорт") }
+                        TextButton(onClick = { deleteId = project.id }) { Text("Удалить") }
+                    }
                 }
             }
         }
-        Text("Удаление объекта уберёт его комнаты и оборудование. Экспорт JSON будет добавлен после проверки CI.",
+        Text("Перед удалением объекта сохрани резервную копию в JSON: восстановление удалённого проекта без файла невозможно.",
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+    if (renameTarget != null) AlertDialog(
+        onDismissRequest = { renameTarget = null },
+        title = { Text("Переименовать объект") },
+        text = { OutlinedTextField(renameName, { renameName = it },
+            label = { Text("Название") }, singleLine = true) },
+        confirmButton = {
+            TextButton(onClick = {
+                renameTarget?.let { onRename(it, renameName) }
+                renameTarget = null
+            }, enabled = renameName.isNotBlank() && renameName.trim().length <= 120) {
+                Text("Сохранить")
+            }
+        },
+        dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Отмена") } }
+    )
     if (deleteId != null) AlertDialog(onDismissRequest = { deleteId = null },
-        title = { Text("Удалить объект?") }, text = { Text("Действие необратимо. Резервной копии пока нет.") },
+        title = { Text("Удалить объект?") }, text = { Text("Действие необратимо. Сохрани резервную копию через «Экспорт», если данные нужны.") },
         confirmButton = { TextButton(onClick = { deleteId?.let(onDelete); deleteId = null }) { Text("Удалить") } },
         dismissButton = { TextButton(onClick = { deleteId = null }) { Text("Отмена") } })
 }
@@ -339,9 +464,9 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
 }
 
 @Composable private fun EstimatePage(parts: List<Part>, onPdf: () -> Unit) {
-    val quote = EstimateMath.calculate(parts.map { EstimateLine(it.priceSnapshotKopeks, it.quantity) })
-    val sum = quote.knownKopeks
-    val missing = quote.unknownLines
+    val totals = EstimateMath.calculate(parts.map { EstimateLine(it.priceSnapshotKopeks, it.quantity) })
+    val sum = totals.knownKopeks
+    val missing = totals.unknownLines
     Page("Смета электрощита") {
         Text("Цены сохраняются при добавлении в проект. У типового каталога цены намеренно не указаны.")
         parts.forEach { part ->
@@ -358,19 +483,21 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
     }
 }
 
-@Composable private fun SettingsPage(dark: Boolean, setDark: (Boolean) -> Unit) {
+@Composable private fun SettingsPage(dark: Boolean, setDark: (Boolean) -> Unit, version: String, onImport: () -> Unit) {
     Page("Настройки") {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Тёмная тема", modifier = Modifier.weight(1f))
             Switch(dark, setDark)
         }
         HorizontalDivider()
-        Text("Каталог: встроенная версия LOCAL-1")
-        Text("Серверное обновление появится на этапе 7. Эта версия работает без подключения к интернету.")
+        Text("Версия каталога: " + version)
+        Button(onClick = onImport, modifier = Modifier.fillMaxWidth()) { Text("Обновить базу из JSON-файла") }
+        Text("Импорт проверяет весь файл до установки. При ошибке установленная база сохраняется.")
+        Text("Серверные обновления появятся на этапе 7. Работа без интернета сохранится.")
         HorizontalDivider()
         Text("Поддержать автора", style = MaterialTheme.typography.titleMedium)
         Text("Приложение полностью бесплатное. Контакт Telegram и реквизиты доната появятся перед публичным релизом.")
-        Text("0.3.0-alpha · Открытый исходный код: github.com/xottab32-droid/Pomoshchnik-Elektrika",
+        Text("0.4.0-alpha · Открытый исходный код: github.com/xottab32-droid/Pomoshchnik-Elektrika",
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
