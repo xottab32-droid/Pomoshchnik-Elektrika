@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room as RoomFactory
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
@@ -74,7 +75,7 @@ class RoomMigrationTest {
                 assertEquals("Квартира", project?.name)
                 assertEquals(12500L, db.dao().getParts("project-old").single().priceSnapshotKopeks)
                 assertEquals(6, db.dao().getRooms("project-old").single().sockets)
-                assertEquals(15000L, db.dao().products().let { kotlinx.coroutines.flow.first(it) }.single().priceKopeks)
+                assertEquals(15000L, db.dao().products().first().single().priceKopeks)
                 val catalog = CatalogService(db)
                 catalog.initialize()
                 assertEquals("LOCAL-1", db.dao().getCatalogState()?.version)
