@@ -1,0 +1,263 @@
+{
+  "format": "ru.pomoshchnik.elektrika.catalog",
+  "schemaVersion": 1,
+  "version": "2026.10.30.1",
+  "items": [
+    {
+      "id": "a1",
+      "category": "Автоматы",
+      "name": "Автомат 1P C10",
+      "unit": "шт",
+      "modules": 1,
+      "priceKopeks": null
+    },
+    {
+      "id": "a2",
+      "category": "Автоматы",
+      "name": "Автомат 1P C16",
+      "unit": "шт",
+      "modules": 1,
+      "priceKopeks": null
+    },
+    {
+      "id": "a3",
+      "category": "Автоматы",
+      "name": "Автомат 1P C20",
+      "unit": "шт",
+      "modules": 1,
+      "priceKopeks": null
+    },
+    {
+      "id": "a4",
+      "category": "Автоматы",
+      "name": "Автомат 1P C25",
+      "unit": "шт",
+      "modules": 1,
+      "priceKopeks": null
+    },
+    {
+      "id": "a5",
+      "category": "Автоматы",
+      "name": "Автомат 2P C25",
+      "unit": "шт",
+      "modules": 2,
+      "priceKopeks": null
+    },
+    {
+      "id": "a6",
+      "category": "Автоматы",
+      "name": "Автомат 3P C32",
+      "unit": "шт",
+      "modules": 3,
+      "priceKopeks": null
+    },
+    {
+      "id": "r1",
+      "category": "УЗО",
+      "name": "УЗО 2P 40А / 30мА тип A",
+      "unit": "шт",
+      "modules": 2,
+      "priceKopeks": null
+    },
+    {
+      "id": "r2",
+      "category": "УЗО",
+      "name": "УЗО 2P 63А / 30мА тип A",
+      "unit": "шт",
+      "modules": 2,
+      "priceKopeks": null
+    },
+    {
+      "id": "d1",
+      "category": "АВДТ",
+      "name": "АВДТ C16 / 30мА тип A",
+      "unit": "шт",
+      "modules": 2,
+      "priceKopeks": null
+    },
+    {
+      "id": "d2",
+      "category": "АВДТ",
+      "name": "АВДТ C10 / 30мА тип A",
+      "unit": "шт",
+      "modules": 2,
+      "priceKopeks": null
+    },
+    {
+      "id": "v1",
+      "category": "Реле",
+      "name": "Реле контроля напряжения 63А",
+      "unit": "шт",
+      "modules": 3,
+      "priceKopeks": null
+    },
+    {
+      "id": "v2",
+      "category": "Контакторы",
+      "name": "Контактор 2P 25А",
+      "unit": "шт",
+      "modules": 2,
+      "priceKopeks": null
+    },
+    {
+      "id": "p1",
+      "category": "Щиты",
+      "name": "Корпус 24 модуля",
+      "unit": "шт",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "p2",
+      "category": "Щиты",
+      "name": "Корпус 36 модулей",
+      "unit": "шт",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "din",
+      "category": "Монтаж",
+      "name": "DIN-рейка 35 мм",
+      "unit": "м",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "pe",
+      "category": "Монтаж",
+      "name": "Шина PE",
+      "unit": "шт",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "n",
+      "category": "Монтаж",
+      "name": "Шина N",
+      "unit": "шт",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "k1",
+      "category": "Монтаж",
+      "name": "Шина гребёнчатая 1P",
+      "unit": "м",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "k2",
+      "category": "Клеммы",
+      "name": "Клемма 2,5 мм²",
+      "unit": "шт",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "k3",
+      "category": "Клеммы",
+      "name": "Клемма 6 мм²",
+      "unit": "шт",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "h1",
+      "category": "Наконечники",
+      "name": "НШВИ 2,5 мм²",
+      "unit": "шт",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "h2",
+      "category": "Наконечники",
+      "name": "НШВИ 6 мм²",
+      "unit": "шт",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "w1",
+      "category": "Провода",
+      "name": "ПуГВ 2,5 мм²",
+      "unit": "м",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "w2",
+      "category": "Провода",
+      "name": "ПуГВ 6 мм²",
+      "unit": "м",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "c1",
+      "category": "Кабели",
+      "name": "ВВГнг(А)-LS 3×1,5 мм²",
+      "unit": "м",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "c2",
+      "category": "Кабели",
+      "name": "ВВГнг(А)-LS 3×2,5 мм²",
+      "unit": "м",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "s1",
+      "category": "Розетки",
+      "name": "Розетка 16 А IP20",
+      "unit": "шт",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "s2",
+      "category": "Розетки",
+      "name": "Розетка 16 А IP44",
+      "unit": "шт",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "s3",
+      "category": "Выключатели",
+      "name": "Выключатель одноклавишный",
+      "unit": "шт",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "b1",
+      "category": "Монтаж",
+      "name": "Подрозетник 68 мм",
+      "unit": "шт",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "b2",
+      "category": "Монтаж",
+      "name": "Коробка распределительная",
+      "unit": "шт",
+      "modules": 0,
+      "priceKopeks": null
+    },
+    {
+      "id": "spd",
+      "category": "УЗИП",
+      "name": "УЗИП тип 2, 1P+N",
+      "unit": "шт",
+      "modules": 2,
+      "priceKopeks": null
+    }
+  ]
+}
