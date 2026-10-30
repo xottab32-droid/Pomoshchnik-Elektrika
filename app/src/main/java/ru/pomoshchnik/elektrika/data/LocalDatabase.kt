@@ -74,6 +74,8 @@ interface LocalDao {
     suspend fun insert(room: Room)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertProducts(products: List<Product>)
+    @Query("UPDATE projects SET name = :name, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun renameProject(id: String, name: String, updatedAt: Long = System.currentTimeMillis()): Int
     @Query("DELETE FROM projects WHERE id = :id")
     suspend fun deleteProject(id: String)
     @Query("DELETE FROM parts WHERE id = :id AND projectId = :projectId")
