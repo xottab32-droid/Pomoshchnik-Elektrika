@@ -1,7 +1,7 @@
 package ru.pomoshchnik.elektrika.data
 
 import android.content.Context
-import androidx.room.Room
+import androidx.room.Room as RoomFactory
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.flow.first
@@ -19,7 +19,7 @@ class ProjectTransferTest {
     private lateinit var transfer: ProjectTransfer
 
     @Before fun setUp() {
-        database = Room.inMemoryDatabaseBuilder(
+        database = RoomFactory.inMemoryDatabaseBuilder(
             ApplicationProvider.getApplicationContext<Context>(), LocalDatabase::class.java
         ).build()
         transfer = ProjectTransfer(database)
