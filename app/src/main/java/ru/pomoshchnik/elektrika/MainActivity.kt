@@ -22,7 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.room.Room
+import androidx.room.Room as RoomFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -38,7 +38,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("settings", MODE_PRIVATE)
-        val db = Room.databaseBuilder(applicationContext, LocalDatabase::class.java, "electrician.db").build()
+        val db = RoomFactory.databaseBuilder(applicationContext, LocalDatabase::class.java, "electrician.db").build()
         val dao = db.dao()
         setContent {
             val scope = rememberCoroutineScope()
@@ -80,7 +80,7 @@ class MainActivity : ComponentActivity() {
                                 lines += part.nameSnapshot + " × " + part.quantity + " — " + sum
                             }
                             lines += ""
-                            lines += "Итого по известным ценам: " + rub(parts.sumOf { (it.priceSnapshotKopeks ?: 0L) * it.quantity })
+                            lines += "Итого по известным ценам: " + rub(EstimateMath.calculate(parts.map { EstimateLine(it.priceSnapshotKopeks, it.quantity) }).knownKopeks)
                             if (parts.any { it.priceSnapshotKopeks == null }) lines += "ВНИМАНИЕ: стоимость неполная"
                             writePdf(output, lines)
                         } ?: error("Нет доступа к файлу")
@@ -339,8 +339,9 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
 }
 
 @Composable private fun EstimatePage(parts: List<Part>, onPdf: () -> Unit) {
-    val sum = parts.sumOf { (it.priceSnapshotKopeks ?: 0L) * it.quantity }
-    val missing = parts.count { it.priceSnapshotKopeks == null }
+    val quote = EstimateMath.calculate(parts.map { EstimateLine(it.priceSnapshotKopeks, it.quantity) })
+    val sum = quote.knownKopeks
+    val missing = quote.unknownLines
     Page("Смета электрощита") {
         Text("Цены сохраняются при добавлении в проект. У типового каталога цены намеренно не указаны.")
         parts.forEach { part ->
