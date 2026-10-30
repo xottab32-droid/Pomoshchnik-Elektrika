@@ -69,6 +69,7 @@ class CloudCatalogUpdater(
 ) {
     suspend fun update(): CloudUpdateResult = withContext(Dispatchers.IO) {
         val release = loadRelease()
+        require(org.json.JSONObject(release.payload).getString("version") == release.version) { "Версия ответа не совпадает с каталогом" }
         val currentVersion = dao.getCatalogState()?.version ?: "не установлена"
         if (currentVersion == release.version) {
             CloudUpdateResult.AlreadyCurrent(release.version)
