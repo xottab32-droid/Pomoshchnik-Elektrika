@@ -50,6 +50,14 @@ interface LocalDao {
     fun parts(projectId: String): Flow<List<Part>>
     @Query("SELECT * FROM rooms WHERE projectId = :projectId ORDER BY id")
     fun rooms(projectId: String): Flow<List<Room>>
+    @Query("SELECT * FROM catalog_state WHERE id = 1 LIMIT 1")
+    fun catalogState(): Flow<CatalogState?>
+    @Query("SELECT * FROM catalog_state WHERE id = 1 LIMIT 1")
+    suspend fun getCatalogState(): CatalogState?
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveCatalogState(state: CatalogState)
+    @Query("DELETE FROM products")
+    suspend fun deleteAllProducts()
     @Query("SELECT COUNT(*) FROM products")
     suspend fun productCount(): Int
     @Insert(onConflict = OnConflictStrategy.ABORT)
@@ -68,9 +76,16 @@ interface LocalDao {
     suspend fun deleteRoom(id: String, projectId: String)
 }
 
-@Database(entities = [Project::class, Product::class, Part::class, Room::class], version = 1, exportSchema = true)
+@Database(entities = [Project::class, Product::class, Part::class, Room::class, CatalogState::class], version = 2, exportSchema = true)
 abstract class LocalDatabase : RoomDatabase() {
     abstract fun dao(): LocalDao
+    companion object {
+        val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `catalog_state` (`id` INTEGER NOT NULL, `version` TEXT NOT NULL, `source` TEXT NOT NULL, `installedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+            }
+        }
+    }
 }
 
 object BundledCatalog {
