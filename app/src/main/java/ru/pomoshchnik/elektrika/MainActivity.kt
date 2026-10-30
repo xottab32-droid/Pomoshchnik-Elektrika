@@ -78,10 +78,7 @@ class MainActivity : ComponentActivity() {
                 selectedId?.let { dao.parts(it).collectAsState(initial = emptyList()).value }
                     ?: emptyList()
             }
-            val rooms = key(selectedId) {
-                selectedId?.let { dao.rooms(it).collectAsState(initial = emptyList()).value }
-                    ?: emptyList()
-            }
+            // Existing Room entities are retained for old project backups, but the plan UI is postponed.
             LaunchedEffect(Unit) {
                 runCatching {
                     withContext(Dispatchers.IO) {
@@ -112,27 +109,10 @@ class MainActivity : ComponentActivity() {
                         .onFailure { error = it.localizedMessage }
                 }
             }
-            val catalogueImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-                if (uri != null) scope.launch {
-                    runCatching {
-                        val content = withContext(Dispatchers.IO) {
-                            contentResolver.openInputStream(uri)?.use { stream ->
-                                val output = ByteArrayOutputStream()
-                                val buffer = ByteArray(8192)
-                                while (true) {
-                                    val n = stream.read(buffer)
-                                    if (n < 0) break
-                                    output.write(buffer, 0, n)
-                                    require(output.size() <= CatalogService.MAX_BYTES) { "Файл больше 4 МБ" }
-                                }
-                                output.toString("UTF-8")
-                            } ?: kotlin.error("Не удалось открыть каталог")
-                        }
-                        catalogService.importJson(content)
-                    }.onSuccess { number ->
-                        Toast.makeText(this@MainActivity, "Каталог обновлён: $number позиций", Toast.LENGTH_LONG).show()
-                    }.onFailure { error = "Обновление каталога: ${it.localizedMessage}" }
-                }
+            var catalogueUpdating by remember { mutableStateOf(false) }
+            var catalogueUpdateMessage by remember { mutableStateOf<String?>(null) }
+            val cloudUpdater = remember {
+                CloudCatalogUpdater(catalogService, dao) { SupabaseCatalogueClient.fetchLatest() }
             }
             val projectExporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
                 val id = exportProjectId
@@ -171,11 +151,11 @@ class MainActivity : ComponentActivity() {
                     },
                     bottomBar = {
                         NavigationBar {
-                            val labels = listOf("Объекты", "Щит", "План", "Расчёт", "Смета", "Ещё")
+                            val labels = listOf("Объекты", "Щит", "Расчёт", "Смета", "Ещё")
                             labels.forEachIndexed { i, label ->
                                 NavigationBarItem(
                                     selected = i == tab, onClick = { tab = i },
-                                    icon = { Text(listOf("▣", "⚡", "⌂", "∑", "₽", "⚙")[i]) },
+                                    icon = { Text(listOf("▣", "⚡", "∑", "₽", "⚙")[i]) },
                                     label = { Text(label, maxLines = 1) }
                                 )
                             }
@@ -231,24 +211,37 @@ class MainActivity : ComponentActivity() {
                                 } },
                                 onRemove = { part -> scope.launch { withContext(Dispatchers.IO) { dao.deletePart(part.id, active.id) } } }
                             )
-                            2 -> if (active == null) EmptyProject() else RoomsPage(rooms,
-                                onAdd = { name, w, l, h, sockets -> scope.launch {
-                                    runCatching { withContext(Dispatchers.IO) {
-                                        dao.insert(Room(projectId = active.id, name = name, widthM = w,
-                                            lengthM = l, heightM = h, sockets = sockets))
-                                    } }.onFailure { error = it.localizedMessage }
-                                } },
-                                onRemove = { room -> scope.launch { withContext(Dispatchers.IO) { dao.deleteRoom(room.id, active.id) } } }
-                            )
-                            3 -> CalculatorPage()
-                            4 -> if (active == null) EmptyProject() else EstimatePage(parts) {
+                            2 -> CalculatorPage()
+                            3 -> if (active == null) EmptyProject() else EstimatePage(parts) {
                                 pdfLauncher.launch("smeta-" + active.name.take(40) + ".pdf")
                             }
                             else -> SettingsPage(dark, setDark = {
                                 dark = it
                                 prefs.edit().putBoolean("dark", it).apply()
                             }, version = catalogState?.version ?: "Загрузка...",
-                                onImport = { catalogueImporter.launch(arrayOf("application/json", "text/plain")) })
+                                updating = catalogueUpdating, message = catalogueUpdateMessage,
+                                onUpdate = {
+                                    if (!catalogueUpdating) {
+                                        catalogueUpdating = true
+                                        catalogueUpdateMessage = "Проверка новой версии на сервере..."
+                                        scope.launch {
+                                            try {
+                                                when (val result = cloudUpdater.update()) {
+                                                    is CloudUpdateResult.AlreadyCurrent ->
+                                                        catalogueUpdateMessage = "Установлена актуальная версия " + result.version
+                                                    is CloudUpdateResult.Installed ->
+                                                        catalogueUpdateMessage = "База обновлена: " + result.previous + " → " +
+                                                            result.version + " (" + result.products + " позиций)"
+                                                }
+                                            } catch (e: Exception) {
+                                                catalogueUpdateMessage = "Ошибка обновления. Старая база сохранена."
+                                                error = "Обновление каталога: " + (e.localizedMessage ?: "Неизвестная ошибка")
+                                            } finally {
+                                                catalogueUpdating = false
+                                            }
+                                        }
+                                    }
+                                })
                         }
                         if (error != null) AlertDialog(onDismissRequest = { error = null },
                             title = { Text("Ошибка") }, text = { Text(error ?: "") },
@@ -390,41 +383,6 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
     }
 }
 
-@Composable private fun RoomsPage(rooms: List<Room>, onAdd: (String, Double, Double, Double, Int) -> Unit, onRemove: (Room) -> Unit) {
-    var name by remember { mutableStateOf("") }
-    var width by remember { mutableStateOf("3.5") }
-    var length by remember { mutableStateOf("4") }
-    var height by remember { mutableStateOf("2.7") }
-    var sockets by remember { mutableStateOf("4") }
-    val w = width.replace(',', '.').toDoubleOrNull()
-    val l = length.replace(',', '.').toDoubleOrNull()
-    val h = height.replace(',', '.').toDoubleOrNull()
-    val count = sockets.toIntOrNull()
-    val valid = name.isNotBlank() && name.length <= 120 && w != null && w in 0.01..1000.0 &&
-        l != null && l in 0.01..1000.0 && h != null && h in 0.01..100.0 && count != null && count in 0..10000
-    Page("Планировка помещений") {
-        Text("Это первый этап: размеры и количество розеток. Автоматический метраж кабеля появится после задания трасс.")
-        OutlinedTextField(name, { name = it }, label = { Text("Комната") }, modifier = Modifier.fillMaxWidth())
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            NumInput("Ширина, м", width, { width = it }, Modifier.weight(1f))
-            NumInput("Длина, м", length, { length = it }, Modifier.weight(1f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            NumInput("Высота, м", height, { height = it }, Modifier.weight(1f))
-            NumInput("Розетки", sockets, { sockets = it }, Modifier.weight(1f))
-        }
-        Button(onClick = { onAdd(name.trim(), w!!, l!!, h!!, count!!); name = "" },
-            enabled = valid, modifier = Modifier.fillMaxWidth()) { Text("Добавить помещение") }
-        rooms.forEach { room ->
-            ListItem(headlineContent = { Text(room.name) },
-                supportingContent = { Text("Площадь " + "%.2f".format(room.widthM * room.lengthM) + " м² · розеток " + room.sockets) },
-                trailingContent = { TextButton(onClick = { onRemove(room) }) { Text("×") } })
-        }
-        Text("Расстояния до щита нельзя определить только по длине и ширине комнат. Нужны расположение щита и маршруты прокладки.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
 @Composable private fun NumInput(title: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
     OutlinedTextField(value, onChange, label = { Text(title) }, modifier = modifier,
         singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
@@ -483,7 +441,7 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
     }
 }
 
-@Composable private fun SettingsPage(dark: Boolean, setDark: (Boolean) -> Unit, version: String, onImport: () -> Unit) {
+@Composable private fun SettingsPage(dark: Boolean, setDark: (Boolean) -> Unit, version: String, updating: Boolean, message: String?, onUpdate: () -> Unit) {
     Page("Настройки") {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Тёмная тема", modifier = Modifier.weight(1f))
@@ -491,13 +449,17 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
         }
         HorizontalDivider()
         Text("Версия каталога: " + version)
-        Button(onClick = onImport, modifier = Modifier.fillMaxWidth()) { Text("Обновить базу из JSON-файла") }
-        Text("Импорт проверяет весь файл до установки. При ошибке установленная база сохраняется.")
-        Text("Серверные обновления появятся на этапе 7. Работа без интернета сохранится.")
+        Button(onClick = onUpdate, enabled = !updating && version != "Загрузка...",
+            modifier = Modifier.fillMaxWidth()) {
+            Text(if (updating) "Обновление..." else "Обновить базу")
+        }
+        if (message != null) Text(message)
+        Text("Нажми кнопку, чтобы загрузить опубликованный каталог с сервера. " +
+            "Без интернета приложение продолжает использовать сохранённую базу.")
         HorizontalDivider()
         Text("Поддержать автора", style = MaterialTheme.typography.titleMedium)
         Text("Приложение полностью бесплатное. Контакт Telegram и реквизиты доната появятся перед публичным релизом.")
-        Text("0.4.0-alpha · Открытый исходный код: github.com/xottab32-droid/Pomoshchnik-Elektrika",
+        Text("0.5.0-alpha · Открытый исходный код: github.com/xottab32-droid/Pomoshchnik-Elektrika",
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
