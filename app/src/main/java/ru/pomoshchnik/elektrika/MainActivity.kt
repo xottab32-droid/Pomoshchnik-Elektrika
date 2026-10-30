@@ -80,7 +80,7 @@ class MainActivity : ComponentActivity() {
                                 lines += part.nameSnapshot + " × " + part.quantity + " — " + sum
                             }
                             lines += ""
-                            lines += "Итого по известным ценам: " + rub(parts.sumOf { (it.priceSnapshotKopeks ?: 0L) * it.quantity })
+                            lines += "Итого по известным ценам: " + rub(EstimateMath.calculate(parts.map { EstimateLine(it.priceSnapshotKopeks, it.quantity) }).knownKopeks)
                             if (parts.any { it.priceSnapshotKopeks == null }) lines += "ВНИМАНИЕ: стоимость неполная"
                             writePdf(output, lines)
                         } ?: error("Нет доступа к файлу")
@@ -339,8 +339,9 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
 }
 
 @Composable private fun EstimatePage(parts: List<Part>, onPdf: () -> Unit) {
-    val sum = parts.sumOf { (it.priceSnapshotKopeks ?: 0L) * it.quantity }
-    val missing = parts.count { it.priceSnapshotKopeks == null }
+    val quote = EstimateMath.calculate(parts.map { EstimateLine(it.priceSnapshotKopeks, it.quantity) })
+    val sum = quote.knownKopeks
+    val missing = quote.unknownLines
     Page("Смета электрощита") {
         Text("Цены сохраняются при добавлении в проект. У типового каталога цены намеренно не указаны.")
         parts.forEach { part ->
