@@ -42,6 +42,12 @@ data class Room(
 
 @Dao
 interface LocalDao {
+    @Query("SELECT * FROM projects WHERE id = :id LIMIT 1")
+    suspend fun getProject(id: String): Project?
+    @Query("SELECT * FROM parts WHERE projectId = :projectId ORDER BY id")
+    suspend fun getParts(projectId: String): List<Part>
+    @Query("SELECT * FROM rooms WHERE projectId = :projectId ORDER BY id")
+    suspend fun getRooms(projectId: String): List<Room>
     @Query("SELECT * FROM projects ORDER BY updatedAt DESC")
     fun projects(): Flow<List<Project>>
     @Query("SELECT * FROM products ORDER BY category, name")
