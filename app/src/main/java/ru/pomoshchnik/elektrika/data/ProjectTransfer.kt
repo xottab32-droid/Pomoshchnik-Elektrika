@@ -8,8 +8,9 @@ import org.json.JSONObject
 import java.util.UUID
 
 /**
- * Offline, human-readable single-project backup. Exports no account or device metadata.
- * Imported records receive fresh IDs, so an existing project can never be overwritten.
+ * Offline project backup (JSON v2). Imports v1 backups created by earlier alpha versions.
+ * The v2 format preserves rail layouts, while all imported IDs are newly generated.
+ * Never export account/device identifiers or raw database files.
  */
 class ProjectTransfer(private val database: LocalDatabase) {
     private val dao = database.dao()
@@ -18,14 +19,17 @@ class ProjectTransfer(private val database: LocalDatabase) {
         database.withTransaction {
             val project = dao.getProject(projectId) ?: error("Проект не найден")
             val parts = dao.getParts(projectId)
-            val rooms = dao.getRooms(projectId)
+            val rooms = dao.getRooms(projectId) // legacy: kept for import compatibility
+            val rails = dao.getRails(projectId)
+            val placements = dao.getPlacements(projectId)
             JSONObject().apply {
                 put("format", FORMAT)
-                put("schemaVersion", 1)
+                put("schemaVersion", 2)
                 put("project", JSONObject().apply { put("name", project.name) })
                 put("parts", JSONArray().apply {
                     parts.forEach { part ->
                         put(JSONObject().apply {
+                            put("backupId", part.id)
                             put("productId", part.productId)
                             put("name", part.nameSnapshot)
                             put("unit", part.unitSnapshot)
@@ -46,30 +50,54 @@ class ProjectTransfer(private val database: LocalDatabase) {
                         })
                     }
                 })
+                put("rails", JSONArray().apply {
+                    rails.forEach { rail ->
+                        put(JSONObject().apply {
+                            put("backupId", rail.id)
+                            put("name", rail.name)
+                            put("capacity", rail.capacity)
+                            put("sortOrder", rail.sortOrder)
+                        })
+                    }
+                })
+                put("placements", JSONArray().apply {
+                    placements.forEach { location ->
+                        put(JSONObject().apply {
+                            put("partBackupId", location.partId)
+                            put("railBackupId", location.railId)
+                            put("startModule", location.startModule)
+                        })
+                    }
+                })
             }.toString(2).also {
                 require(it.toByteArray(Charsets.UTF_8).size <= MAX_BYTES) { "Проект слишком большой для экспорта JSON" }
             }
         }
     }
 
-    /** An imported project always has fresh identifiers. The optional name is used for local duplication. */
+    /** Imports a new independent project; validates EVERYTHING before the first DB write. */
     suspend fun importJson(content: String, nameOverride: String? = null): Project = withContext(Dispatchers.IO) {
         require(content.toByteArray(Charsets.UTF_8).size <= MAX_BYTES) { "Файл больше 4 МБ" }
         val json = JSONObject(content)
         require(json.optString("format") == FORMAT) { "Неподдерживаемый формат проекта" }
-        require(json.optInt("schemaVersion") == 1) { "Неподдерживаемая версия проекта" }
+        val schema = json.optInt("schemaVersion")
+        require(schema in 1..2) { "Неподдерживаемая версия проекта" }
+
         val projectName = validText(nameOverride ?: json.getJSONObject("project").getString("name"), 120, "Название проекта")
         val parts = json.getJSONArray("parts")
         val rooms = json.getJSONArray("rooms")
-        require(parts.length() <= 5_000 && rooms.length() <= 1_000) { "Слишком много записей" }
+        val rails = if (schema == 2) json.getJSONArray("rails") else JSONArray()
+        val placements = if (schema == 2) json.getJSONArray("placements") else JSONArray()
+        require(parts.length() <= 5_000 && rooms.length() <= 1_000 &&
+            rails.length() <= 16 && placements.length() <= 5_000) { "Слишком много записей" }
 
-        // Validate everything before creating the project or its children.
         val newId = UUID.randomUUID().toString()
+        val oldToNewParts = mutableMapOf<String, Part>()
         val checkedParts = (0 until parts.length()).map { index ->
             val row = parts.getJSONObject(index)
             val price = if (!row.has("priceKopeks") || row.isNull("priceKopeks")) null
                 else wholeNumber(row, "priceKopeks", 0, 1_000_000_000)
-            Part(
+            val part = Part(
                 projectId = newId,
                 productId = validText(row.getString("productId"), 100, "ID оборудования"),
                 nameSnapshot = validText(row.getString("name"), 160, "Название оборудования"),
@@ -78,6 +106,11 @@ class ProjectTransfer(private val database: LocalDatabase) {
                 modulesSnapshot = wholeNumber(row, "modules", 0, 100).toInt(),
                 quantity = wholeNumber(row, "quantity", 1, 10_000).toInt()
             )
+            if (schema == 2) {
+                val backupId = validText(row.getString("backupId"), 100, "ID записи щита")
+                require(oldToNewParts.putIfAbsent(backupId, part) == null) { "Повторяющийся ID аппарата" }
+            }
+            part
         }
         val checkedRooms = (0 until rooms.length()).map { index ->
             val row = rooms.getJSONObject(index)
@@ -90,22 +123,60 @@ class ProjectTransfer(private val database: LocalDatabase) {
                 sockets = wholeNumber(row, "sockets", 0, 10_000).toInt()
             )
         }
+        val oldToNewRails = mutableMapOf<String, DinRail>()
+        val checkedRails = (0 until rails.length()).map { index ->
+            val row = rails.getJSONObject(index)
+            val backupId = validText(row.getString("backupId"), 100, "ID DIN-рейки")
+            val capacity = wholeNumber(row, "capacity", 6, 36).toInt()
+            require(capacity in listOf(6, 12, 18, 24, 36)) { "Недопустимое число модулей рейки" }
+            val rail = DinRail(projectId = newId,
+                name = validText(row.getString("name"), 120, "Имя DIN-рейки"),
+                capacity = capacity, sortOrder = wholeNumber(row, "sortOrder", 0, 1000).toInt()
+            )
+            require(oldToNewRails.putIfAbsent(backupId, rail) == null) { "Повторяющийся ID рейки" }
+            rail
+        }
+        val placedPartIds = mutableSetOf<String>()
+        val checkedPlacements = (0 until placements.length()).map { index ->
+            val row = placements.getJSONObject(index)
+            val oldPartId = validText(row.getString("partBackupId"), 100, "ID аппарата")
+            val oldRailId = validText(row.getString("railBackupId"), 100, "ID рейки")
+            val part = oldToNewParts[oldPartId] ?: error("Размещение с неизвестным аппаратом")
+            val rail = oldToNewRails[oldRailId] ?: error("Размещение с неизвестной рейкой")
+            require(placedPartIds.add(oldPartId)) { "Аппарат размещён несколько раз" }
+            require(part.quantity == 1 && part.modulesSnapshot > 0) { "Недопустимый аппарат для DIN-рейки" }
+            val start = wholeNumber(row, "startModule", 0, 35).toInt()
+            RailPlacement(partId = part.id, railId = rail.id, startModule = start)
+        }
+        // Reject collisions, out-of-bounds modules and damaged backup references.
+        checkedRails.forEach { rail ->
+            val occupied = mutableListOf<RailGeometry.Occupied>()
+            checkedPlacements.filter { it.railId == rail.id }.forEach { p ->
+                val part = checkedParts.single { it.id == p.partId }
+                require(RailGeometry.fits(rail.capacity, p.startModule, part.modulesSnapshot, occupied)) {
+                    "Конфликт модулей в резервной копии"
+                }
+                occupied += RailGeometry.Occupied(p.partId, p.startModule, part.modulesSnapshot)
+            }
+        }
+
         val project = Project(id = newId, name = projectName)
         database.withTransaction {
             dao.insert(project)
             checkedParts.forEach { dao.insert(it) }
             checkedRooms.forEach { dao.insert(it) }
+            checkedRails.forEach { dao.insertRail(it) }
+            checkedPlacements.forEach { dao.savePlacement(it) }
         }
         project
     }
 
-    /** Copies a full object locally, preserving its price snapshots but never IDs. */
+    /** Copies the project and mechanical layout while remapping IDs and preserving price snapshots. */
     suspend fun duplicateProject(projectId: String): Project {
         val projectName = withContext(Dispatchers.IO) {
             dao.getProject(projectId)?.name ?: error("Проект не найден")
         }
-        val copyName = ("Копия — " + projectName).take(120)
-        return importJson(exportJson(projectId), nameOverride = copyName)
+        return importJson(exportJson(projectId), nameOverride = ("Копия — " + projectName).take(120))
     }
 
     private fun validText(value: String, limit: Int, label: String): String = value.trim().also {
