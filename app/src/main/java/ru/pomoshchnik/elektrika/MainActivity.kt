@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.room.Room as RoomFactory
+import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -141,11 +142,25 @@ class MainActivity : ComponentActivity() {
                 }
             }
             val scheme = if (dark) darkColorScheme(primary = accent) else lightColorScheme(primary = accent)
+            SideEffect {
+                // Keep the Android clock/notification icons readable in both app themes.
+                WindowInsetsControllerCompat(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
             MaterialTheme(colorScheme = scheme) {
                 Scaffold(
                     topBar = {
-                        Column {
-                            Text("ПОМОЩНИК ЭЛЕКТРИКА", fontWeight = FontWeight.Bold, modifier = Modifier.padding(18.dp))
+                        // Android 15+ forces edge-to-edge; top bars MUST consume status-bar insets.
+                        // Draw the surface behind the system bar, but keep ALL app content below it.
+                        Column(
+                            Modifier.fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surface)
+                                .statusBarsPadding()
+                        ) {
+                            Text("ПОМОЩНИК ЭЛЕКТРИКА", fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 18.dp))
                             HorizontalDivider()
                         }
                     },
