@@ -52,12 +52,13 @@ class ProjectTransfer(private val database: LocalDatabase) {
         }
     }
 
-    suspend fun importJson(content: String): Project = withContext(Dispatchers.IO) {
+    /** An imported project always has fresh identifiers. The optional name is used for local duplication. */
+    suspend fun importJson(content: String, nameOverride: String? = null): Project = withContext(Dispatchers.IO) {
         require(content.toByteArray(Charsets.UTF_8).size <= MAX_BYTES) { "Файл больше 4 МБ" }
         val json = JSONObject(content)
         require(json.optString("format") == FORMAT) { "Неподдерживаемый формат проекта" }
         require(json.optInt("schemaVersion") == 1) { "Неподдерживаемая версия проекта" }
-        val projectName = validText(json.getJSONObject("project").getString("name"), 120, "Название проекта")
+        val projectName = validText(nameOverride ?: json.getJSONObject("project").getString("name"), 120, "Название проекта")
         val parts = json.getJSONArray("parts")
         val rooms = json.getJSONArray("rooms")
         require(parts.length() <= 5_000 && rooms.length() <= 1_000) { "Слишком много записей" }
@@ -96,6 +97,15 @@ class ProjectTransfer(private val database: LocalDatabase) {
             checkedRooms.forEach { dao.insert(it) }
         }
         project
+    }
+
+    /** Copies a full object locally, preserving its price snapshots but never IDs. */
+    suspend fun duplicateProject(projectId: String): Project {
+        val projectName = withContext(Dispatchers.IO) {
+            dao.getProject(projectId)?.name ?: error("Проект не найден")
+        }
+        val copyName = ("Копия — " + projectName).take(120)
+        return importJson(exportJson(projectId), nameOverride = copyName)
     }
 
     private fun validText(value: String, limit: Int, label: String): String = value.trim().also {
