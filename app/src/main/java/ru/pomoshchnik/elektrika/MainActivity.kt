@@ -29,11 +29,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ru.pomoshchnik.elektrika.data.*
 import java.io.ByteArrayOutputStream
+import java.math.BigDecimal
 import java.text.NumberFormat
 import java.util.Locale
 
 private val accent = Color(0xFFCE403F)
-private fun rub(kopeks: Long): String = NumberFormat.getCurrencyInstance(Locale("ru", "RU")).format(kopeks / 100.0)
+private fun rub(kopeks: Long): String = NumberFormat.getCurrencyInstance(Locale("ru", "RU")).format(BigDecimal.valueOf(kopeks, 2))
 
 class MainActivity : ComponentActivity() {
     private fun readLimitedJson(uri: android.net.Uri, maxBytes: Int): String {
@@ -103,7 +104,7 @@ class MainActivity : ComponentActivity() {
                                 lines += part.nameSnapshot + " × " + part.quantity + " — " + sum
                             }
                             lines += ""
-                            lines += "Итого по известным ценам: " + rub(parts.sumOf { (it.priceSnapshotKopeks ?: 0L) * it.quantity })
+                            lines += "Итого по известным ценам: " + rub(EstimateMath.calculate(parts.map { EstimateLine(it.priceSnapshotKopeks, it.quantity) }).knownKopeks)
                             if (parts.any { it.priceSnapshotKopeks == null }) lines += "ВНИМАНИЕ: стоимость неполная"
                             writePdf(output, lines)
                         } ?: kotlin.error("Нет доступа к файлу")
@@ -423,8 +424,9 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
 }
 
 @Composable private fun EstimatePage(parts: List<Part>, onPdf: () -> Unit) {
-    val sum = parts.sumOf { (it.priceSnapshotKopeks ?: 0L) * it.quantity }
-    val missing = parts.count { it.priceSnapshotKopeks == null }
+    val totals = EstimateMath.calculate(parts.map { EstimateLine(it.priceSnapshotKopeks, it.quantity) })
+    val sum = totals.knownKopeks
+    val missing = totals.unknownLines
     Page("Смета электрощита") {
         Text("Цены сохраняются при добавлении в проект. У типового каталога цены намеренно не указаны.")
         parts.forEach { part ->
