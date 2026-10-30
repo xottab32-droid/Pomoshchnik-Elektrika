@@ -1,4 +1,4 @@
-name: Android APK
+name: Android APK and unit tests
 on:
   push:
     branches: [main]
@@ -7,6 +7,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     permissions:
       contents: read
     steps:
@@ -23,8 +24,10 @@ jobs:
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
       - name: Unit tests and debug APK
         run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace
+      - name: Confirm debug APK exists
+        run: test -s app/build/outputs/apk/debug/app-debug.apk
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: pomoshchnik-elektrika-0.3.0-alpha-debug
+          name: pomoshchnik-elektrika-0.4.0-alpha-debug
           path: app/build/outputs/apk/debug/app-debug.apk
