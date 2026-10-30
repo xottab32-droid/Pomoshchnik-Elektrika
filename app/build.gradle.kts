@@ -11,13 +11,30 @@ android {
         applicationId = "ru.pomoshchnik.elektrika"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.5.0-alpha"
+        versionCode = 6
+        versionName = "0.5.1-alpha"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+    // Permanent release signer from GitHub Actions secrets (never checked into Git).
+    // Debug builds remain ordinary ephemeral debug builds for open-source PR testing.
+    signingConfigs {
+        create("stableRelease") {
+            storeFile = file(System.getenv("ELECTRICIAN_SIGNING_KEYSTORE_PATH") ?: "missing-release-key.p12")
+            storePassword = System.getenv("ELECTRICIAN_SIGNING_PASSWORD") ?: ""
+            keyAlias = "pomoshchnik"
+            keyPassword = System.getenv("ELECTRICIAN_SIGNING_PASSWORD") ?: ""
+            storeType = "pkcs12"
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("stableRelease")
+            isMinifyEnabled = false
+        }
     }
     buildFeatures { compose = true }
     testOptions { unitTests.isReturnDefaultValues = true }
@@ -41,4 +58,5 @@ dependencies {
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test:core:1.7.0")
     androidTestImplementation("androidx.room:room-testing:2.8.5")
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 }
