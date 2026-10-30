@@ -1,0 +1,23 @@
+{
+  "format": "ru.pomoshchnik.elektrika.catalog",
+  "schemaVersion": 1,
+  "version": "2026.10.30-demo",
+  "items": [
+    {
+      "id": "demo.breaker.1p.c16",
+      "category": "Автоматические выключатели",
+      "name": "Автомат 1P C16 (пример)",
+      "unit": "шт",
+      "modules": 1,
+      "priceKopeks": null
+    },
+    {
+      "id": "demo.cable.3x2p5",
+      "category": "Кабели",
+      "name": "ВВГнг(А)-LS 3×2,5 мм² (пример)",
+      "unit": "м",
+      "modules": 0,
+      "priceKopeks": null
+    }
+  ]
+}
