@@ -119,7 +119,13 @@ jobs:
         if: steps.signing.outputs.ready == 'true'
         shell: bash
         run: |
-          printf '%s' "$ENCODED_KEYSTORE" | base64 --decode > "$RUNNER_TEMP/pomoshchnik-release-key.p12"
+          # Wrapped Base64 copied from a text editor may contain CR/LF/spaces.
+          # Strip whitespace ONLY, never discard arbitrary characters.
+          if ! printf '%s' "$ENCODED_KEYSTORE" | tr -d '[:space:]' | base64 --decode > "$RUNNER_TEMP/pomoshchnik-release-key.p12"; then
+            rm -f "$RUNNER_TEMP/pomoshchnik-release-key.p12"
+            echo "::error::Invalid Base64 in ELECTRICIAN_SIGNING_KEYSTORE_BASE64. Paste the entire contents of KEYSTORE_BASE64.txt without quotes, markdown, or extra text."
+            exit 1
+          fi
           chmod 600 "$RUNNER_TEMP/pomoshchnik-release-key.p12"
           echo "ELECTRICIAN_SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/pomoshchnik-release-key.p12" >> "$GITHUB_ENV"
           echo "ELECTRICIAN_SIGNING_PASSWORD=$SIGNING_PASSWORD" >> "$GITHUB_ENV"
