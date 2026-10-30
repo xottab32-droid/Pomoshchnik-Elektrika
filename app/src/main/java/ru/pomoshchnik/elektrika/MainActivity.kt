@@ -202,7 +202,24 @@ class MainActivity : ComponentActivity() {
                                     exportProjectId = project.id
                                     projectExporter.launch("project-" + project.name.take(45).replace(Regex("[^a-zA-Zа-яА-ЯёЁ0-9 _-]"), "_") + ".json")
                                 },
-                                onImport = { projectImporter.launch(arrayOf("application/json", "text/plain")) }
+                                onImport = { projectImporter.launch(arrayOf("application/json", "text/plain")) },
+                                onRename = { project, newName ->
+                                    scope.launch {
+                                        runCatching {
+                                            withContext(Dispatchers.IO) {
+                                                dao.renameProject(project.id, newName.trim(), System.currentTimeMillis())
+                                            }
+                                        }.onFailure { error = "Переименование: ${it.localizedMessage}" }
+                                    }
+                                },
+                                onDuplicate = { project ->
+                                    scope.launch {
+                                        runCatching {
+                                            withContext(Dispatchers.IO) { projectTransfer.duplicateProject(project.id) }
+                                        }.onSuccess { copy -> selectedId = copy.id }
+                                            .onFailure { error = "Копирование: ${it.localizedMessage}" }
+                                    }
+                                }
                             )
                             1 -> if (active == null) EmptyProject() else PanelPage(active.name, parts, products,
                                 onAdd = { product -> scope.launch {
@@ -279,10 +296,13 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
 @Composable private fun ProjectsPage(
     projects: List<Project>, selectedId: String?, onSelect: (String) -> Unit,
     onCreate: (String) -> Unit, onDelete: (String) -> Unit,
-    onExport: (Project) -> Unit, onImport: () -> Unit
+    onExport: (Project) -> Unit, onImport: () -> Unit,
+    onRename: (Project, String) -> Unit, onDuplicate: (Project) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var deleteId by remember { mutableStateOf<String?>(null) }
+    var renameTarget by remember { mutableStateOf<Project?>(null) }
+    var renameName by remember { mutableStateOf("") }
     Page("Мои объекты") {
         OutlinedTextField(name, { name = it }, label = { Text("Название объекта") }, singleLine = true,
             modifier = Modifier.fillMaxWidth())
@@ -301,6 +321,11 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Column {
+                        TextButton(onClick = {
+                            renameTarget = project
+                            renameName = project.name
+                        }) { Text("Название") }
+                        TextButton(onClick = { onDuplicate(project) }) { Text("Копия") }
                         TextButton(onClick = { onExport(project) }) { Text("Экспорт") }
                         TextButton(onClick = { deleteId = project.id }) { Text("Удалить") }
                     }
@@ -310,8 +335,23 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
         Text("Перед удалением объекта сохрани резервную копию в JSON: восстановление удалённого проекта без файла невозможно.",
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+    if (renameTarget != null) AlertDialog(
+        onDismissRequest = { renameTarget = null },
+        title = { Text("Переименовать объект") },
+        text = { OutlinedTextField(renameName, { renameName = it },
+            label = { Text("Название") }, singleLine = true) },
+        confirmButton = {
+            TextButton(onClick = {
+                renameTarget?.let { onRename(it, renameName) }
+                renameTarget = null
+            }, enabled = renameName.isNotBlank() && renameName.trim().length <= 120) {
+                Text("Сохранить")
+            }
+        },
+        dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Отмена") } }
+    )
     if (deleteId != null) AlertDialog(onDismissRequest = { deleteId = null },
-        title = { Text("Удалить объект?") }, text = { Text("Действие необратимо. Резервной копии пока нет.") },
+        title = { Text("Удалить объект?") }, text = { Text("Действие необратимо. Сохрани резервную копию через «Экспорт», если данные нужны.") },
         confirmButton = { TextButton(onClick = { deleteId?.let(onDelete); deleteId = null }) { Text("Удалить") } },
         dismissButton = { TextButton(onClick = { deleteId = null }) { Text("Отмена") } })
 }
