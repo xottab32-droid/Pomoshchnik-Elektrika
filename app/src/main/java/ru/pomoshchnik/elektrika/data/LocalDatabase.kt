@@ -48,6 +48,26 @@ interface LocalDao {
     suspend fun getParts(projectId: String): List<Part>
     @Query("SELECT * FROM rooms WHERE projectId = :projectId ORDER BY id")
     suspend fun getRooms(projectId: String): List<Room>
+    @Query("SELECT * FROM parts WHERE id = :id LIMIT 1")
+    suspend fun getPart(id: String): Part?
+    @Query("SELECT * FROM din_rails WHERE id = :id LIMIT 1")
+    suspend fun getRail(id: String): DinRail?
+    @Query("SELECT * FROM din_rails WHERE projectId = :projectId ORDER BY sortOrder, id")
+    suspend fun getRails(projectId: String): List<DinRail>
+    @Query("SELECT * FROM din_rails WHERE projectId = :projectId ORDER BY sortOrder, id")
+    fun rails(projectId: String): Flow<List<DinRail>>
+    @Query("SELECT rail_placements.* FROM rail_placements JOIN din_rails ON rail_placements.railId = din_rails.id WHERE din_rails.projectId = :projectId ORDER BY rail_placements.startModule")
+    suspend fun getPlacements(projectId: String): List<RailPlacement>
+    @Query("SELECT rail_placements.* FROM rail_placements JOIN din_rails ON rail_placements.railId = din_rails.id WHERE din_rails.projectId = :projectId ORDER BY rail_placements.startModule")
+    fun placements(projectId: String): Flow<List<RailPlacement>>
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertRail(rail: DinRail)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun savePlacement(placement: RailPlacement)
+    @Query("DELETE FROM rail_placements WHERE partId = :partId")
+    suspend fun deletePlacement(partId: String)
+    @Query("DELETE FROM din_rails WHERE id = :railId")
+    suspend fun deleteRail(railId: String)
     @Query("SELECT * FROM projects ORDER BY updatedAt DESC")
     fun projects(): Flow<List<Project>>
     @Query("SELECT * FROM products ORDER BY category, name")
@@ -84,13 +104,34 @@ interface LocalDao {
     suspend fun deleteRoom(id: String, projectId: String)
 }
 
-@Database(entities = [Project::class, Product::class, Part::class, Room::class, CatalogState::class], version = 2, exportSchema = true)
+@Database(entities = [Project::class, Product::class, Part::class, Room::class, CatalogState::class, DinRail::class, RailPlacement::class], version = 3, exportSchema = true)
 abstract class LocalDatabase : RoomDatabase() {
     abstract fun dao(): LocalDao
     companion object {
         val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS `catalog_state` (`id` INTEGER NOT NULL, `version` TEXT NOT NULL, `source` TEXT NOT NULL, `installedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+            }
+        }
+        val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `din_rails` (
+                    `id` TEXT NOT NULL, `projectId` TEXT NOT NULL, `name` TEXT NOT NULL,
+                    `capacity` INTEGER NOT NULL, `sortOrder` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`),
+                    FOREIGN KEY(`projectId`) REFERENCES `projects`(`id`)
+                        ON UPDATE NO ACTION ON DELETE CASCADE
+                )""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_din_rails_projectId` ON `din_rails` (`projectId`)")
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `rail_placements` (
+                    `partId` TEXT NOT NULL, `railId` TEXT NOT NULL, `startModule` INTEGER NOT NULL,
+                    PRIMARY KEY(`partId`),
+                    FOREIGN KEY(`partId`) REFERENCES `parts`(`id`)
+                        ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(`railId`) REFERENCES `din_rails`(`id`)
+                        ON UPDATE NO ACTION ON DELETE CASCADE
+                )""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_rail_placements_railId` ON `rail_placements` (`railId`)")
             }
         }
     }
