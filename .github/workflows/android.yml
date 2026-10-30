@@ -141,10 +141,14 @@ jobs:
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           "$APKSIGNER" verify --verbose --print-certs "$APK" > "$RUNNER_TEMP/apk-signing-details.txt"
           EXPECTED="a873d87df133fb4750aaf9a48c1ce6391ced58f3ff5e43d3a52c1343d3951afc"
-          ACTUAL="$(sed -nE 's/.*Signer #1 certificate SHA-256 digest: ([[:xdigit:]]+).*/\1/p' "$RUNNER_TEMP/apk-signing-details.txt" | head -n 1 | tr '[:upper:]' '[:lower:]')"
-          test -n "$ACTUAL"
-          if [[ "$ACTUAL" != "$EXPECTED" ]]; then
-            echo "::error::The release signature does not match the permanent trusted certificate. Refusing to publish."
+          # apksigner output format differs across Android build-tools versions.
+          # Compare the exact 64-hex certificate digest after case, spaces and colon
+          # normalization, without relying on a particular localized field label.
+          NORMALIZED_CERTS="$(tr -d '[:space:]:' < "$RUNNER_TEMP/apk-signing-details.txt" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$NORMALIZED_CERTS" != *"$EXPECTED"* ]]; then
+            echo "::error::The APK certificate fingerprint differs from the permanent release certificate. Refusing to publish."
+            # Only public certificate metadata is printed for diagnostics.
+            grep -i "signer" "$RUNNER_TEMP/apk-signing-details.txt" || true
             exit 1
           fi
           echo "Signed release verified with the permanent certificate."
