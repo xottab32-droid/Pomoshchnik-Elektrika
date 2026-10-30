@@ -71,13 +71,15 @@ class MainActivity : ComponentActivity() {
             val projects by projectFlow.collectAsState(initial = emptyList())
             val products by productFlow.collectAsState(initial = emptyList())
             val catalogState by stateFlow.collectAsState(initial = null)
-            val parts by produceState(initialValue = emptyList<Part>(), key1 = selectedId) {
-                val id = selectedId ?: return@produceState
-                dao.parts(id).collect { value = it }
+            // key() recreates the collection state when switching projects, preventing
+            // the previous project's devices/rooms appearing while the new Flow loads.
+            val parts = key(selectedId) {
+                selectedId?.let { dao.parts(it).collectAsState(initial = emptyList()).value }
+                    ?: emptyList()
             }
-            val rooms by produceState(initialValue = emptyList<Room>(), key1 = selectedId) {
-                val id = selectedId ?: return@produceState
-                dao.rooms(id).collect { value = it }
+            val rooms = key(selectedId) {
+                selectedId?.let { dao.rooms(it).collectAsState(initial = emptyList()).value }
+                    ?: emptyList()
             }
             LaunchedEffect(Unit) {
                 runCatching {
@@ -152,6 +154,7 @@ class MainActivity : ComponentActivity() {
                         val data = withContext(Dispatchers.IO) { readLimitedJson(uri, ProjectTransfer.MAX_BYTES) }
                         projectTransfer.importJson(data)
                     }.onSuccess { imported ->
+                        selectedId = imported.id
                         Toast.makeText(this@MainActivity, "Импортирован проект: ${imported.name}", Toast.LENGTH_LONG).show()
                     }.onFailure { error = "Импорт проекта: ${it.localizedMessage}" }
                 }
