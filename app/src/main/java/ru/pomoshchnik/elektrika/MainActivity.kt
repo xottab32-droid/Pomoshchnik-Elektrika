@@ -22,7 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.room.Room
+import androidx.room.Room as RoomFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -54,7 +54,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("settings", MODE_PRIVATE)
-        val db = Room.databaseBuilder(applicationContext, LocalDatabase::class.java, "electrician.db")
+        val db = RoomFactory.databaseBuilder(applicationContext, LocalDatabase::class.java, "electrician.db")
             .addMigrations(LocalDatabase.MIGRATION_1_2).build()
         val catalogService = CatalogService(db)
         val projectTransfer = ProjectTransfer(db)
