@@ -11,8 +11,8 @@ android {
         applicationId = "ru.pomoshchnik.elektrika"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0-alpha"
+        versionCode = 4
+        versionName = "0.4.0-alpha"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
@@ -22,11 +22,8 @@ android {
     buildFeatures { compose = true }
     testOptions { unitTests.isReturnDefaultValues = true }
 }
-kotlin {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-    }
-}
+kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
 dependencies {
     implementation("androidx.room:room-runtime:2.8.5")
@@ -40,4 +37,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.core:core-ktx:1.17.0")
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test:core:1.7.0")
+    androidTestImplementation("androidx.room:room-testing:2.8.5")
 }
