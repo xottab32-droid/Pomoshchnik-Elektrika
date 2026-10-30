@@ -20,7 +20,7 @@
 - Установленный формат JSON: `format = ru.pomoshchnik.elektrika.catalog`, `schemaVersion = 1`, `items = [{id,category,name,unit,modules,priceKopeks}]`.
 - `priceKopeks = null` означает «цена неизвестна»; нельзя выдавать пустой прайс за окончательную стоимость.
 
-SQL-схема: [create_read_only_catalog_releases.sql](../supabase/migrations/20261030154227_create_read_only_catalog_releases.sql).
+SQL-схема: [create_read_only_catalog_releases.sql](../../supabase/migrations/20261030154227_create_read_only_catalog_releases.sql).
 
 **Безопасность:** Postgres RLS разрешает роли `anon` только SELECT по `published=true`; INSERT/UPDATE/DELETE для `anon` и `authenticated` отозваны. Секретный серверный ключ **никогда** не внедряется в APK. Из-за изменений Supabase с 30.10.2026 SELECT выдан через явный GRANT.
 
