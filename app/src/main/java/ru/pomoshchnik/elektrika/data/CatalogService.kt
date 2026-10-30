@@ -58,7 +58,7 @@ class CatalogService(private val database: LocalDatabase) {
             require(dao.getCatalogState()?.version != version) { "Версия $version уже установлена" }
             dao.deleteAllProducts()
             dao.insertProducts(validated)
-            dao.saveCatalogState(CatalogState(version = version, source = "local-file", installedAt = System.currentTimeMillis()))
+            dao.saveCatalogState(CatalogState(version = version, source = "cloud", installedAt = System.currentTimeMillis()))
         }
         validated.size
     }
