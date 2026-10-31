@@ -56,9 +56,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("settings", MODE_PRIVATE)
         val db = RoomFactory.databaseBuilder(applicationContext, LocalDatabase::class.java, "electrician.db")
-            .addMigrations(LocalDatabase.MIGRATION_1_2, LocalDatabase.MIGRATION_2_3).build()
+            .addMigrations(LocalDatabase.MIGRATION_1_2, LocalDatabase.MIGRATION_2_3, LocalDatabase.MIGRATION_3_4).build()
         val catalogService = CatalogService(db)
         val railEditor = DinRailEditor(db)
+        val cabinetEditor = CabinetEditor(db)
         val projectTransfer = ProjectTransfer(db)
         val dao = db.dao()
         setContent {
@@ -79,6 +80,9 @@ class MainActivity : ComponentActivity() {
             val parts = key(selectedId) {
                 selectedId?.let { dao.parts(it).collectAsState(initial = emptyList()).value }
                     ?: emptyList()
+            }
+            val cabinet = key(selectedId) {
+                selectedId?.let { dao.cabinet(it).collectAsState(initial = null).value }
             }
             val rails = key(selectedId) {
                 selectedId?.let { dao.rails(it).collectAsState(initial = emptyList()).value }
@@ -225,9 +229,15 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             )
-                            1 -> if (active == null) EmptyProject() else PanelPage(
+                            1 -> if (active == null) EmptyProject() else GraphicalPanelPage(
                                 projectId = active.id, projectName = active.name,
-                                parts = parts, products = products, rails = rails, placements = placements,
+                                cabinet = cabinet, parts = parts, products = products, rails = rails, placements = placements,
+                                onSelectCabinet = { code ->
+                                    scope.launch {
+                                        runCatching { cabinetEditor.select(active.id, code) }
+                                            .onFailure { error = it.localizedMessage }
+                                    }
+                                },
                                 onAdd = { product ->
                                     scope.launch {
                                         runCatching { withContext(Dispatchers.IO) {
@@ -394,175 +404,6 @@ private fun writePdf(output: java.io.OutputStream, lines: List<String>) {
         title = { Text("Удалить объект?") }, text = { Text("Действие необратимо. Сохрани резервную копию через «Экспорт», если данные нужны.") },
         confirmButton = { TextButton(onClick = { deleteId?.let(onDelete); deleteId = null }) { Text("Удалить") } },
         dismissButton = { TextButton(onClick = { deleteId = null }) { Text("Отмена") } })
-}
-
-@Composable private fun PanelPage(
-    projectId: String, projectName: String, parts: List<Part>, products: List<Product>,
-    rails: List<DinRail>, placements: List<RailPlacement>,
-    onAdd: (Product) -> Unit, onRemove: (Part) -> Unit,
-    onAddRail: (Int) -> Unit, onDeleteRail: (DinRail) -> Unit,
-    onPlace: (String, String, Int?) -> Unit, onUnplace: (String) -> Unit
-) {
-    var search by remember(projectId) { mutableStateOf("") }
-    var category by remember(projectId) { mutableStateOf("Все") }
-    var selectedPartId by remember(projectId) { mutableStateOf<String?>(null) }
-    var deletingRail by remember(projectId) { mutableStateOf<DinRail?>(null) }
-    val partById = parts.associateBy { it.id }
-    val placementByPart = placements.associateBy { it.partId }
-    val categories = listOf("Все") + products.map { it.category }.distinct().sorted()
-    val visibleProducts = products.filter { product ->
-        (category == "Все" || product.category == category) &&
-            (product.name.contains(search.trim(), ignoreCase = true) ||
-                product.category.contains(search.trim(), ignoreCase = true))
-    }
-    Page("Щит · " + projectName) {
-        Text("Компоновка DIN-реек (механическое расположение). Электрические соединения и однолинейная схема пока не создаются.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-        Text("DIN-рейки", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text("Добавь рейку, выбери аппарат в перечне и нажми на свободный модуль. При перемещении учитывается ширина аппарата.",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(6, 12, 18, 24, 36).forEach { size ->
-                OutlinedButton(onClick = { onAddRail(size) }, enabled = rails.size < 16) {
-                    Text("+ " + size + " мод.")
-                }
-            }
-        }
-        if (rails.isEmpty()) Text("Пока нет DIN-реек. Выбери количество модулей выше.")
-        rails.forEach { rail ->
-            val placedHere = placements.filter { it.railId == rail.id }
-            val used = placedHere.sumOf { partById[it.partId]?.modulesSnapshot ?: 0 }
-            OutlinedCard(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(rail.name, fontWeight = FontWeight.SemiBold)
-                            Text("${used}/${rail.capacity} модулей занято",
-                                style = MaterialTheme.typography.bodySmall)
-                        }
-                        TextButton(onClick = { deletingRail = rail }) { Text("Удалить") }
-                    }
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                        var index = 0
-                        while (index < rail.capacity) {
-                            val placed = placedHere.firstOrNull { it.startModule == index }
-                            val part = placed?.let { partById[it.partId] }
-                            val width = part?.modulesSnapshot?.coerceIn(1, rail.capacity - index) ?: 1
-                            val cellStart = index
-                            val selected = part != null && part.id == selectedPartId
-                            Box(
-                                Modifier.width((width * 37).dp).height(60.dp)
-                                    .padding(end = 2.dp)
-                                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-                                    .background(
-                                        if (part != null)
-                                            if (selected) MaterialTheme.colorScheme.primaryContainer
-                                            else MaterialTheme.colorScheme.secondaryContainer
-                                        else MaterialTheme.colorScheme.surfaceVariant,
-                                        RoundedCornerShape(4.dp)
-                                    )
-                                    .clickable(enabled = selectedPartId != null) {
-                                        selectedPartId?.let { onPlace(it, rail.id, cellStart) }
-                                    }.padding(4.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    if (part == null) "${index + 1}" else part.nameSnapshot,
-                                    maxLines = if (width > 1) 2 else 1,
-                                    style = MaterialTheme.typography.labelSmall
-                                )
-                            }
-                            index += width
-                        }
-                    }
-                    if (selectedPartId != null) {
-                        Button(onClick = { selectedPartId?.let { onPlace(it, rail.id, null) } }) {
-                            Text("Разместить в первый свободный слот")
-                        }
-                    }
-                }
-            }
-        }
-
-        HorizontalDivider()
-        Text("Оборудование проекта · ${parts.size} поз.", style = MaterialTheme.typography.titleMedium)
-        if (selectedPartId != null) {
-            Text("Выбран аппарат: " + (partById[selectedPartId]?.nameSnapshot ?: "не найден") +
-                ". Нажми свободный модуль на рейке, чтобы разместить или переместить.",
-                color = MaterialTheme.colorScheme.primary)
-            TextButton(onClick = { selectedPartId = null }) { Text("Отменить выбор") }
-        }
-        parts.forEach { part ->
-            val location = placementByPart[part.id]
-            ListItem(
-                headlineContent = { Text(part.nameSnapshot) },
-                supportingContent = {
-                    Text(buildString {
-                        append(if (part.priceSnapshotKopeks == null) "Цена неизвестна" else rub(part.priceSnapshotKopeks))
-                        append(" · " + part.modulesSnapshot + " мод.")
-                        if (location != null) {
-                            append(" · " + (rails.firstOrNull { it.id == location.railId }?.name ?: "Рейка"))
-                            append(" · поз. " + (location.startModule + 1))
-                        }
-                    })
-                },
-                trailingContent = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (part.modulesSnapshot > 0 && part.quantity == 1) {
-                            TextButton(onClick = { selectedPartId = part.id }) { Text("Выбрать") }
-                        }
-                        if (location != null) {
-                            TextButton(onClick = { onUnplace(part.id) }) { Text("Снять") }
-                        }
-                        TextButton(onClick = {
-                            if (selectedPartId == part.id) selectedPartId = null
-                            onRemove(part)
-                        }) { Text("×") }
-                    }
-                }
-            )
-        }
-        HorizontalDivider()
-        Text("Каталог · ${products.size} позиций", style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(search, { search = it }, label = { Text("Поиск оборудования") },
-            modifier = Modifier.fillMaxWidth(), singleLine = true)
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            categories.forEach { value ->
-                FilterChip(selected = category == value, onClick = { category = value },
-                    label = { Text(value) })
-            }
-        }
-        Text("Найдено: ${visibleProducts.size}", style = MaterialTheme.typography.labelMedium)
-        visibleProducts.take(60).forEach { product ->
-            OutlinedCard(Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(product.name)
-                        Text(product.category + " · " + product.modules + " мод. · " +
-                            (product.priceKopeks?.let(::rub) ?: "цена неизвестна"),
-                            style = MaterialTheme.typography.bodySmall)
-                    }
-                    TextButton(onClick = { onAdd(product) }) { Text("+") }
-                }
-            }
-        }
-        if (visibleProducts.isEmpty()) Text("Ничего не найдено. Попробуй другую категорию или запрос.")
-    }
-    deletingRail?.let { rail ->
-        AlertDialog(
-            onDismissRequest = { deletingRail = null },
-            title = { Text("Удалить ${rail.name}?") },
-            text = { Text("Размещение аппаратов на этой рейке будет сброшено. Сами аппараты и смета останутся.") },
-            confirmButton = {
-                TextButton(onClick = { onDeleteRail(rail); deletingRail = null }) { Text("Удалить рейку") }
-            },
-            dismissButton = {
-                TextButton(onClick = { deletingRail = null }) { Text("Отмена") }
-            }
-        )
-    }
 }
 
 @Composable private fun NumInput(title: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
