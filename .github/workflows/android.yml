@@ -156,7 +156,7 @@ jobs:
         if: steps.signing.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: pomoshchnik-elektrika-0.6.0-alpha-SIGNED-release
+          name: pomoshchnik-elektrika-0.7.0-alpha-SIGNED-release
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 90
