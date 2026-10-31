@@ -52,7 +52,7 @@ fun GraphicalPanelPage(
     onPlace: (String, String, Int?) -> Unit,
     onUnplace: (String) -> Unit
 ) {
-    var pickerOpen by remember(projectId) { mutableStateOf(cabinet == null) }
+    var pickerOpen by remember(projectId) { mutableStateOf(false) }
     var selectedPartId by remember(projectId) { mutableStateOf<String?>(null) }
     var catalogOpen by remember(projectId) { mutableStateOf(false) }
     var query by remember(projectId) { mutableStateOf("") }
