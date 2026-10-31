@@ -17,6 +17,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class DinRailEditorTest {
     private lateinit var db: LocalDatabase
+    private lateinit var cabinets: CabinetEditor
     private lateinit var editor: DinRailEditor
     private lateinit var backup: ProjectTransfer
 
@@ -25,6 +26,7 @@ class DinRailEditorTest {
             ApplicationProvider.getApplicationContext<Context>(), LocalDatabase::class.java
         ).build()
         editor = DinRailEditor(db)
+        cabinets = CabinetEditor(db)
         backup = ProjectTransfer(db)
     }
 
@@ -33,6 +35,7 @@ class DinRailEditorTest {
     @Test fun placementPreventsOverlapAndOutOfBoundsAndAllowsMoving() = runBlocking {
         val project = Project(name = "Щит")
         db.dao().insert(project)
+        cabinets.select(project.id, "universal-2x12")
         val rail = editor.addRail(project.id, 12)
         val breaker = Part(projectId = project.id, productId = "a2", nameSnapshot = "Автомат",
             unitSnapshot = "шт", priceSnapshotKopeks = 5000, modulesSnapshot = 2)
@@ -52,6 +55,7 @@ class DinRailEditorTest {
     @Test fun deletingRailDoesNotDeletePartsOrChangeHistoricalPrices() = runBlocking {
         val project = Project(name = "Дом")
         db.dao().insert(project)
+        cabinets.select(project.id, "universal-2x18")
         val rail = editor.addRail(project.id, 18)
         val part = Part(projectId = project.id, productId = "r1", nameSnapshot = "УЗО",
             unitSnapshot = "шт", priceSnapshotKopeks = 15000, modulesSnapshot = 2)
@@ -68,6 +72,7 @@ class DinRailEditorTest {
         val p2 = Project(name = "Второй")
         db.dao().insert(p1)
         db.dao().insert(p2)
+        cabinets.select(p1.id, "universal-1x12")
         val rail = editor.addRail(p1.id, 12)
         val part = Part(projectId = p2.id, productId = "a1", nameSnapshot = "Автомат",
             unitSnapshot = "шт", priceSnapshotKopeks = null, modulesSnapshot = 1)
@@ -90,13 +95,14 @@ class DinRailEditorTest {
         editor.placePart(project.id, part.id, rail.id, 5)
 
         val data = backup.exportJson(project.id)
-        assertEquals(2, JSONObject(data).getInt("schemaVersion"))
+        assertEquals(3, JSONObject(data).getInt("schemaVersion"))
         val imported = backup.importJson(data)
         val copied = backup.duplicateProject(project.id)
         for (candidate in listOf(imported, copied)) {
             assertNotEquals(project.id, candidate.id)
             val newPart = db.dao().getParts(candidate.id).single()
             val newRail = db.dao().getRails(candidate.id).single()
+            assertEquals("universal-2x12", db.dao().getCabinet(candidate.id)?.modelCode)
             val location = db.dao().getPlacements(candidate.id).single()
             assertNotEquals(part.id, newPart.id)
             assertNotEquals(rail.id, newRail.id)
