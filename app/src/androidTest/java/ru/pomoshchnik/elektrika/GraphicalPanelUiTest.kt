@@ -6,6 +6,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNode
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.assertExists
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -34,7 +35,7 @@ class GraphicalPanelUiTest {
             rule.onAllNodesWithText("Установленные DIN-рейки · 0/2")
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        rule.onNodeWithText("+ DIN-рейка").performClick()
+        rule.onNodeWithText("+ DIN-рейка").performScrollTo().performClick()
         rule.waitUntil(10000L) {
             rule.onAllNodesWithText("Установленные DIN-рейки · 1/2")
                 .fetchSemanticsNodes().isNotEmpty()
