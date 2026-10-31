@@ -88,6 +88,7 @@ class DinRailEditorTest {
     @Test fun backupAndCopyPreserveRailPositionsButAllocateNewIds() = runBlocking {
         val project = Project(name = "Проект")
         db.dao().insert(project)
+        cabinets.select(project.id, "universal-2x12")
         val rail = editor.addRail(project.id, 12)
         val part = Part(projectId = project.id, productId = "a5", nameSnapshot = "Автомат 2P",
             unitSnapshot = "шт", priceSnapshotKopeks = 12345, modulesSnapshot = 2)
@@ -116,6 +117,7 @@ class DinRailEditorTest {
     @Test fun corruptedBackupDoesNotCreatePartialProject() = runBlocking {
         val project = Project(name = "Исходник")
         db.dao().insert(project)
+        cabinets.select(project.id, "universal-2x12")
         val rail = editor.addRail(project.id, 12)
         val part = Part(projectId = project.id, productId = "a2", nameSnapshot = "Автомат",
             unitSnapshot = "шт", priceSnapshotKopeks = 0, modulesSnapshot = 1)
