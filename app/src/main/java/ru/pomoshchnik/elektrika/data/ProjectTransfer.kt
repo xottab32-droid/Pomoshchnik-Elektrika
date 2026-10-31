@@ -8,8 +8,8 @@ import org.json.JSONObject
 import java.util.UUID
 
 /**
- * Offline project backup (JSON v2). Imports v1 backups created by earlier alpha versions.
- * The v2 format preserves rail layouts, while all imported IDs are newly generated.
+ * Offline project backup (JSON v3). Imports legacy v1/v2 backups.
+ * The v3 format also preserves a graphical cabinet choice; all imported IDs are regenerated.
  * Never export account/device identifiers or raw database files.
  */
 class ProjectTransfer(private val database: LocalDatabase) {
@@ -22,10 +22,17 @@ class ProjectTransfer(private val database: LocalDatabase) {
             val rooms = dao.getRooms(projectId) // legacy: kept for import compatibility
             val rails = dao.getRails(projectId)
             val placements = dao.getPlacements(projectId)
+            val cabinet = dao.getCabinet(projectId)
             JSONObject().apply {
                 put("format", FORMAT)
-                put("schemaVersion", 2)
+                put("schemaVersion", 3)
                 put("project", JSONObject().apply { put("name", project.name) })
+                put("cabinet", if (cabinet == null) JSONObject.NULL else JSONObject().apply {
+                    put("modelCode", cabinet.modelCode)
+                    put("displayName", cabinet.displayName)
+                    put("rows", cabinet.rows)
+                    put("modulesPerRow", cabinet.modulesPerRow)
+                })
                 put("parts", JSONArray().apply {
                     parts.forEach { part ->
                         put(JSONObject().apply {
@@ -81,13 +88,13 @@ class ProjectTransfer(private val database: LocalDatabase) {
         val json = JSONObject(content)
         require(json.optString("format") == FORMAT) { "Неподдерживаемый формат проекта" }
         val schema = json.optInt("schemaVersion")
-        require(schema in 1..2) { "Неподдерживаемая версия проекта" }
+        require(schema in 1..3) { "Неподдерживаемая версия проекта" }
 
         val projectName = validText(nameOverride ?: json.getJSONObject("project").getString("name"), 120, "Название проекта")
         val parts = json.getJSONArray("parts")
         val rooms = json.getJSONArray("rooms")
-        val rails = if (schema == 2) json.getJSONArray("rails") else JSONArray()
-        val placements = if (schema == 2) json.getJSONArray("placements") else JSONArray()
+        val rails = if (schema >= 2) json.getJSONArray("rails") else JSONArray()
+        val placements = if (schema >= 2) json.getJSONArray("placements") else JSONArray()
         require(parts.length() <= 5_000 && rooms.length() <= 1_000 &&
             rails.length() <= 16 && placements.length() <= 5_000) { "Слишком много записей" }
 
@@ -106,7 +113,7 @@ class ProjectTransfer(private val database: LocalDatabase) {
                 modulesSnapshot = wholeNumber(row, "modules", 0, 100).toInt(),
                 quantity = wholeNumber(row, "quantity", 1, 10_000).toInt()
             )
-            if (schema == 2) {
+            if (schema >= 2) {
                 val backupId = validText(row.getString("backupId"), 100, "ID записи щита")
                 require(oldToNewParts.putIfAbsent(backupId, part) == null) { "Повторяющийся ID аппарата" }
             }
@@ -136,6 +143,22 @@ class ProjectTransfer(private val database: LocalDatabase) {
             require(oldToNewRails.putIfAbsent(backupId, rail) == null) { "Повторяющийся ID рейки" }
             rail
         }
+        val cabinet: CabinetSelection? =
+            if (schema == 3 && json.has("cabinet") && !json.isNull("cabinet")) {
+                val saved = json.getJSONObject("cabinet")
+                val code = validText(saved.getString("modelCode"), 80, "Код корпуса")
+                val model = CabinetCatalog.find(code)
+                    ?: throw IllegalArgumentException("Неизвестный типоразмер корпуса")
+                require(model.rows == wholeNumber(saved, "rows", 1, 16).toInt() &&
+                    model.modulesPerRow == wholeNumber(saved, "modulesPerRow", 1, 36).toInt()) {
+                    "Размеры корпуса не соответствуют модели"
+                }
+                require(checkedRails.size <= model.rows &&
+                    checkedRails.all { it.capacity == model.modulesPerRow }) {
+                    "DIN-рейки не помещаются в корпус"
+                }
+                CabinetSelection(newId, model.code, model.title, model.rows, model.modulesPerRow)
+            } else null
         val placedPartIds = mutableSetOf<String>()
         val checkedPlacements = (0 until placements.length()).map { index ->
             val row = placements.getJSONObject(index)
@@ -165,6 +188,7 @@ class ProjectTransfer(private val database: LocalDatabase) {
             dao.insert(project)
             checkedParts.forEach { dao.insert(it) }
             checkedRooms.forEach { dao.insert(it) }
+            if (cabinet != null) dao.saveCabinet(cabinet)
             checkedRails.forEach { dao.insertRail(it) }
             checkedPlacements.forEach { dao.savePlacement(it) }
         }
