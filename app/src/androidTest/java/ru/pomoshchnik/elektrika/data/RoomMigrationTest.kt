@@ -11,7 +11,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.UUID
 
-/** Tests a genuine file created with the version-1 SQLite schema before Room opens v3. */
+/** Tests a genuine file created with the version-1 SQLite schema before Room opens v4. */
 @RunWith(AndroidJUnit4::class)
 class RoomMigrationTest {
     @Test fun migrationFromV1RetainsProjectsPartsAndRooms() = runBlocking {
@@ -68,7 +68,7 @@ class RoomMigrationTest {
                 old.version = 1
             }
             val db = RoomFactory.databaseBuilder(context, LocalDatabase::class.java, name)
-                .addMigrations(LocalDatabase.MIGRATION_1_2, LocalDatabase.MIGRATION_2_3).build()
+                .addMigrations(LocalDatabase.MIGRATION_1_2, LocalDatabase.MIGRATION_2_3, LocalDatabase.MIGRATION_3_4).build()
             try {
                 val project = db.dao().getProject("project-old")
                 assertNotNull(project)
@@ -81,6 +81,7 @@ class RoomMigrationTest {
                 assertEquals("LOCAL-1", db.dao().getCatalogState()?.version)
                 assertEquals(1, db.dao().productCount())
                 assertTrue(db.dao().getRails("project-old").isEmpty())
+                assertNull(db.dao().getCabinet("project-old"))
             } finally {
                 db.close()
             }

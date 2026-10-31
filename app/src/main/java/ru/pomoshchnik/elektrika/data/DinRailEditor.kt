@@ -70,8 +70,10 @@ class DinRailEditor(private val database: LocalDatabase) {
         require(capacity in listOf(6, 12, 18, 24, 36)) { "Выбери рейку на 6, 12, 18, 24 или 36 модулей" }
         database.withTransaction {
             require(dao.getProject(projectId) != null) { "Проект не найден" }
+            val cabinet = dao.getCabinet(projectId) ?: error("Сначала выбери корпус щита")
+            require(cabinet.modulesPerRow == capacity) { "DIN-рейка должна соответствовать ширине корпуса" }
             val existing = dao.getRails(projectId)
-            require(existing.size < 16) { "Максимум 16 реек в щите" }
+            require(existing.size < cabinet.rows) { "В корпусе больше нет свободных рядов" }
             val next = (existing.maxOfOrNull { it.sortOrder } ?: -1) + 1
             DinRail(projectId = projectId, name = "DIN-рейка ${existing.size + 1}", capacity = capacity, sortOrder = next)
                 .also { dao.insertRail(it) }

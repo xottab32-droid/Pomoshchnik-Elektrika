@@ -42,6 +42,12 @@ data class Room(
 
 @Dao
 interface LocalDao {
+    @Query("SELECT * FROM cabinet_selections WHERE projectId = :projectId LIMIT 1")
+    fun cabinet(projectId: String): Flow<CabinetSelection?>
+    @Query("SELECT * FROM cabinet_selections WHERE projectId = :projectId LIMIT 1")
+    suspend fun getCabinet(projectId: String): CabinetSelection?
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveCabinet(cabinet: CabinetSelection)
     @Query("SELECT * FROM projects WHERE id = :id LIMIT 1")
     suspend fun getProject(id: String): Project?
     @Query("SELECT * FROM parts WHERE projectId = :projectId ORDER BY id")
@@ -104,7 +110,7 @@ interface LocalDao {
     suspend fun deleteRoom(id: String, projectId: String)
 }
 
-@Database(entities = [Project::class, Product::class, Part::class, Room::class, CatalogState::class, DinRail::class, RailPlacement::class], version = 3, exportSchema = true)
+@Database(entities = [Project::class, Product::class, Part::class, Room::class, CatalogState::class, DinRail::class, RailPlacement::class, CabinetSelection::class], version = 4, exportSchema = true)
 abstract class LocalDatabase : RoomDatabase() {
     abstract fun dao(): LocalDao
     companion object {
@@ -132,6 +138,17 @@ abstract class LocalDatabase : RoomDatabase() {
                         ON UPDATE NO ACTION ON DELETE CASCADE
                 )""")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_rail_placements_railId` ON `rail_placements` (`railId`)")
+            }
+        }
+        val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `cabinet_selections` (
+                    `projectId` TEXT NOT NULL, `modelCode` TEXT NOT NULL,
+                    `displayName` TEXT NOT NULL, `rows` INTEGER NOT NULL,
+                    `modulesPerRow` INTEGER NOT NULL, PRIMARY KEY(`projectId`),
+                    FOREIGN KEY(`projectId`) REFERENCES `projects`(`id`)
+                        ON UPDATE NO ACTION ON DELETE CASCADE
+                )""")
             }
         }
     }
